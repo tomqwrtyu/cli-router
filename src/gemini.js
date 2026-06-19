@@ -71,12 +71,15 @@ export function geminiDoneChunk(usageMetadata = null) {
 }
 
 export function estimateUsageMetadata(normalized, outputText, config) {
-  const imageCount = normalized.imagePaths.length;
+  const images = Array.isArray(normalized.images) ? normalized.images : [];
+  const imageCount = images.length;
   const inputChars = [normalized.systemInstruction, normalized.prompt]
     .filter(Boolean)
     .join('\n')
     .length;
-  const promptTokenCount = Math.ceil(inputChars / 4) + imageCount * config.usage.imagePromptTokens;
+  const imageTokenDetails = images.map((image) => estimateImagePromptTokens(image, config));
+  const imageTokenCount = imageTokenDetails.reduce((total, image) => total + image.tokenCount, 0);
+  const promptTokenCount = Math.ceil(inputChars / 4) + imageTokenCount;
   const candidatesTokenCount = Math.ceil((outputText || '').length / 4);
   return {
     promptTokenCount,
@@ -84,8 +87,70 @@ export function estimateUsageMetadata(normalized, outputText, config) {
     totalTokenCount: promptTokenCount + candidatesTokenCount,
     estimated: true,
     imageCount,
-    imagePromptTokenEstimate: config.usage.imagePromptTokens
+    imageTokenCount,
+    ...(imageCount > 0
+      ? {
+          imageTokenDetails,
+          imageTokenEstimateConfig: {
+            smallImageMaxPixels: config.usage.imageSmallMaxPixels,
+            tileSizePixels: config.usage.imageTileSize,
+            tokensPerTile: config.usage.imageTileTokens,
+            maxTokens: config.usage.imageMaxTokens,
+            fallbackTokens: config.usage.imageFallbackTokens
+          }
+        }
+      : {})
   };
+}
+
+function estimateImagePromptTokens(image, config) {
+  const dimensions = image?.dimensions;
+  if (
+    dimensions &&
+    Number.isFinite(dimensions.width) &&
+    Number.isFinite(dimensions.height) &&
+    dimensions.width > 0 &&
+    dimensions.height > 0
+  ) {
+    if (
+      dimensions.width <= config.usage.imageSmallMaxPixels &&
+      dimensions.height <= config.usage.imageSmallMaxPixels
+    ) {
+      return {
+        tokenCount: applyImageTokenCap(config.usage.imageTileTokens, config),
+        estimateMethod: 'gemini-small-image',
+        width: dimensions.width,
+        height: dimensions.height,
+        tileCount: 1
+      };
+    }
+
+    const horizontalTiles = Math.max(1, Math.ceil(dimensions.width / config.usage.imageTileSize));
+    const verticalTiles = Math.max(1, Math.ceil(dimensions.height / config.usage.imageTileSize));
+    const tileCount = horizontalTiles * verticalTiles;
+    const uncappedTokenCount = tileCount * config.usage.imageTileTokens;
+    const tokenCount = applyImageTokenCap(uncappedTokenCount, config);
+    return {
+      tokenCount,
+      estimateMethod: 'gemini-tile-estimate',
+      width: dimensions.width,
+      height: dimensions.height,
+      tileSizePixels: config.usage.imageTileSize,
+      horizontalTiles,
+      verticalTiles,
+      tileCount,
+      ...(tokenCount !== uncappedTokenCount ? { uncappedTokenCount } : {})
+    };
+  }
+  return {
+    tokenCount: applyImageTokenCap(config.usage.imageFallbackTokens, config),
+    estimateMethod: 'fallback'
+  };
+}
+
+function applyImageTokenCap(tokenCount, config) {
+  if (config.usage.imageMaxTokens > 0) return Math.min(config.usage.imageMaxTokens, tokenCount);
+  return tokenCount;
 }
 
 export async function normalizeGeminiRequest(body, config, modelEntry) {
@@ -108,6 +173,7 @@ export async function normalizeGeminiRequest(body, config, modelEntry) {
   const systemInstruction = collectTextParts(body.systemInstruction);
   const contextBlocks = [];
   const imagePaths = [];
+  const images = [];
 
   try {
     for (const content of contents) {
@@ -130,6 +196,13 @@ export async function normalizeGeminiRequest(body, config, modelEntry) {
           });
           if (materialized.kind === 'image') {
             imagePaths.push(materialized.path);
+            images.push({
+              path: materialized.path,
+              mimeType: materialized.mimeType,
+              name: materialized.name,
+              byteLength: materialized.byteLength,
+              dimensions: materialized.dimensions
+            });
             roleBlocks.push(`[Attached image: ${materialized.name} (${materialized.mimeType})]`);
           } else if (materialized.kind === 'text') {
             roleBlocks.push(materialized.textBlock);
@@ -157,6 +230,7 @@ export async function normalizeGeminiRequest(body, config, modelEntry) {
       systemInstruction,
       prompt,
       imagePaths,
+      images,
       generationConfig
     };
   } catch (error) {

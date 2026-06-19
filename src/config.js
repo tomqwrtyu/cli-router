@@ -68,7 +68,11 @@ export function loadConfig() {
     maxConcurrentRuns: intEnv('MAX_CONCURRENT_RUNS', 2),
     tmpDir: process.env.TMP_DIR || '/tmp/cli-router',
     usage: {
-      imagePromptTokens: intEnv('IMAGE_PROMPT_TOKEN_ESTIMATE', 256)
+      imageFallbackTokens: intEnv('IMAGE_PROMPT_TOKEN_ESTIMATE', 258),
+      imageTileTokens: intEnv('IMAGE_PROMPT_TILE_TOKENS', 258),
+      imageSmallMaxPixels: intEnv('IMAGE_PROMPT_SMALL_MAX_PIXELS', 384),
+      imageTileSize: intEnv('IMAGE_PROMPT_TILE_SIZE', 768),
+      imageMaxTokens: intEnv('IMAGE_PROMPT_MAX_TOKENS', 0)
     },
     attachments: {
       allowedFileUriHosts: listEnv('ALLOWED_FILE_URI_HOSTS', []),

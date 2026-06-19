@@ -17,6 +17,10 @@ function mimeFromData(data, fallback) {
   return data.mime_type || data.mimeType || fallback || '';
 }
 
+function fileUriFromData(data) {
+  return data.file_uri || data.fileUri || '';
+}
+
 function displayNameFromUrl(url) {
   try {
     const parsed = new URL(url);
@@ -143,6 +147,83 @@ async function writeAttachment(runDir, name, mimeType, buffer) {
   return filePath;
 }
 
+function parsePngDimensions(buffer) {
+  if (buffer.length < 24) return null;
+  if (buffer.toString('ascii', 1, 4) !== 'PNG') return null;
+  return {
+    width: buffer.readUInt32BE(16),
+    height: buffer.readUInt32BE(20)
+  };
+}
+
+function parseJpegDimensions(buffer) {
+  if (buffer.length < 4 || buffer[0] !== 0xff || buffer[1] !== 0xd8) return null;
+  let offset = 2;
+  while (offset + 9 < buffer.length) {
+    if (buffer[offset] !== 0xff) {
+      offset += 1;
+      continue;
+    }
+    const marker = buffer[offset + 1];
+    offset += 2;
+    if (marker === 0xd8 || marker === 0xd9) continue;
+    if (offset + 2 > buffer.length) return null;
+    const length = buffer.readUInt16BE(offset);
+    if (length < 2 || offset + length > buffer.length) return null;
+    const isStartOfFrame = (
+      (marker >= 0xc0 && marker <= 0xc3) ||
+      (marker >= 0xc5 && marker <= 0xc7) ||
+      (marker >= 0xc9 && marker <= 0xcb) ||
+      (marker >= 0xcd && marker <= 0xcf)
+    );
+    if (isStartOfFrame && length >= 7) {
+      return {
+        height: buffer.readUInt16BE(offset + 3),
+        width: buffer.readUInt16BE(offset + 5)
+      };
+    }
+    offset += length;
+  }
+  return null;
+}
+
+function parseWebpDimensions(buffer) {
+  if (buffer.length < 30) return null;
+  if (buffer.toString('ascii', 0, 4) !== 'RIFF' || buffer.toString('ascii', 8, 12) !== 'WEBP') return null;
+  const chunk = buffer.toString('ascii', 12, 16);
+  if (chunk === 'VP8X' && buffer.length >= 30) {
+    return {
+      width: 1 + buffer.readUIntLE(24, 3),
+      height: 1 + buffer.readUIntLE(27, 3)
+    };
+  }
+  if (chunk === 'VP8 ' && buffer.length >= 30) {
+    return {
+      width: buffer.readUInt16LE(26) & 0x3fff,
+      height: buffer.readUInt16LE(28) & 0x3fff
+    };
+  }
+  if (chunk === 'VP8L' && buffer.length >= 25 && buffer[20] === 0x2f) {
+    const bits = buffer.readUInt32LE(21);
+    return {
+      width: (bits & 0x3fff) + 1,
+      height: ((bits >> 14) & 0x3fff) + 1
+    };
+  }
+  return null;
+}
+
+function imageDimensions(mimeType, buffer) {
+  try {
+    if (mimeType === 'image/png') return parsePngDimensions(buffer);
+    if (mimeType === 'image/jpeg') return parseJpegDimensions(buffer);
+    if (mimeType === 'image/webp') return parseWebpDimensions(buffer);
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 function truncateText(text, maxChars) {
   if (text.length <= maxChars) return { text, truncated: false };
   return { text: text.slice(0, maxChars), truncated: true };
@@ -190,12 +271,17 @@ export async function materializePart(part, { config, runDir, modelEntry }) {
     });
   }
 
-  const name = part.fileData?.file_uri
-    ? displayNameFromUrl(part.fileData.file_uri)
+  const fileUri = part.fileData ? fileUriFromData(part.fileData) : '';
+  if (part.fileData && !fileUri) {
+    throw new HttpError(400, 'INVALID_ARGUMENT', 'file_data.file_uri or fileData.fileUri is required');
+  }
+
+  const name = fileUri
+    ? displayNameFromUrl(fileUri)
     : `inline-${mimeType.replace('/', '-')}`;
 
   const buffer = part.fileData
-    ? await downloadFile(part.fileData.file_uri, mimeType, config)
+    ? await downloadFile(fileUri, mimeType, config)
     : decodeInlineData(part.inlineData, mimeType, config);
 
   if (isImage) {
@@ -206,7 +292,7 @@ export async function materializePart(part, { config, runDir, modelEntry }) {
       });
     }
     const filePath = await writeAttachment(runDir, name, mimeType, buffer);
-    return { kind: 'image', path: filePath, mimeType, name };
+    return { kind: 'image', path: filePath, mimeType, name, byteLength: buffer.length, dimensions: imageDimensions(mimeType, buffer) };
   }
 
   const extracted = await textFromBuffer(mimeType, buffer, config);
