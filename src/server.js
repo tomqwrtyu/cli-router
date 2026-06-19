@@ -106,7 +106,9 @@ async function handleModels({ req, res, url, config, registry, verifyJwt }) {
       name: `models/${name}`,
       displayName: name,
       supportedGenerationMethods: ['generateContent', 'streamGenerateContent'],
-      provider: entry.provider
+      provider: entry.provider,
+      supportsImages: Boolean(entry.supportsImages),
+      billing: entry.billing || null
     }));
   sendJson(res, 200, { models });
   return true;

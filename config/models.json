@@ -3,24 +3,52 @@
     "provider": "claude",
     "cliModel": "sonnet",
     "enabled": true,
-    "supportsImages": false
+    "supportsImages": false,
+    "billing": {
+      "unit": "credits_per_1m_tokens",
+      "input": 2.0,
+      "output": 12.0,
+      "costMultiplier": 2.0,
+      "estimatedUsage": true
+    }
   },
   "claude-opus-latest": {
     "provider": "claude",
     "cliModel": "opus",
     "enabled": true,
-    "supportsImages": false
+    "supportsImages": false,
+    "billing": {
+      "unit": "credits_per_1m_tokens",
+      "input": 4.0,
+      "output": 20.0,
+      "costMultiplier": 2.0,
+      "estimatedUsage": true
+    }
   },
   "gpt-5.5": {
     "provider": "codex",
     "cliModel": "gpt-5.5",
     "enabled": true,
-    "supportsImages": true
+    "supportsImages": true,
+    "billing": {
+      "unit": "credits_per_1m_tokens",
+      "input": 4.0,
+      "output": 20.0,
+      "costMultiplier": 2.0,
+      "estimatedUsage": true
+    }
   },
   "gpt-5.4": {
     "provider": "codex",
     "cliModel": "gpt-5.4",
     "enabled": true,
-    "supportsImages": true
+    "supportsImages": true,
+    "billing": {
+      "unit": "credits_per_1m_tokens",
+      "input": 2.0,
+      "output": 12.0,
+      "costMultiplier": 2.0,
+      "estimatedUsage": true
+    }
   }
 }

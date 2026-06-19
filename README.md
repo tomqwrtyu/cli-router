@@ -140,7 +140,14 @@ Models are public IDs in `config/models.json`. The router never passes arbitrary
     "provider": "claude",
     "cliModel": "sonnet",
     "enabled": true,
-    "supportsImages": false
+    "supportsImages": false,
+    "billing": {
+      "unit": "credits_per_1m_tokens",
+      "input": 2.0,
+      "output": 12.0,
+      "costMultiplier": 2.0,
+      "estimatedUsage": true
+    }
   }
 }
 ```
