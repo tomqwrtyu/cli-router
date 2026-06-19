@@ -83,6 +83,35 @@ POST /v1beta/models/:model:generateContent
 POST /v1beta/models/:model:streamGenerateContent?alt=sse
 ```
 
+## Calling From Existing Supabase Edge Functions
+
+Existing Edge Functions in the same Supabase project can read the project-wide
+secrets that were set by `scripts/supabase-setup.sh`:
+
+- `ROUTER_URL`
+- `ROUTER_JWT_PRIVATE_JWK`
+- `ROUTER_JWT_ISSUER`
+- `ROUTER_JWT_AUDIENCE`
+
+Copy [examples/supabase-router-client.ts](examples/supabase-router-client.ts)
+into an existing function, then call:
+
+```ts
+const upstream = await callCliRouter(
+  '/v1beta/models/claude-sonnet:streamGenerateContent?alt=sse',
+  geminiShapedBody,
+  { headers: { accept: 'text/event-stream' } }
+)
+
+return new Response(upstream.body, {
+  status: upstream.status,
+  headers: upstream.headers
+})
+```
+
+Do not forward a user's Supabase session JWT to `cli-router`. The Edge Function
+validates the user session, then signs a separate 60-second router JWT.
+
 Supported request subset:
 
 - `contents[].parts[].text`
