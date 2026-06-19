@@ -7,6 +7,7 @@ function providerCommand(normalized, modelEntry, config) {
       '-p',
       '--output-format',
       'text',
+      '--safe-mode',
       '--no-session-persistence',
       '--disable-slash-commands',
       '--permission-mode',

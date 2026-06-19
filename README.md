@@ -200,3 +200,12 @@ Default limits:
 - Injected document text: 50,000 chars
 
 Codex supports images through `codex exec --image`. Claude image support is disabled in the default registry because the installed `claude -p` help does not expose a local image attachment flag.
+
+## Provider Isolation
+
+Provider CLIs are run as one-shot chat backends, not coding agents:
+
+- Claude uses `--safe-mode`, `--no-session-persistence`, disabled slash commands, no tools, and the request `systemInstruction` as `--system-prompt`. `--safe-mode` disables CLAUDE.md, hooks, skills, plugins, MCP, custom commands, agents, output styles, workflows, and other local customizations while preserving normal Claude Code auth.
+- Codex runs with `--ephemeral`, `--ignore-user-config`, `--ignore-rules`, `--sandbox read-only`, and a temporary `--cd` directory. Prompts are passed through stdin, and images are passed with `--image`.
+
+This keeps global/project coding instructions such as `CLAUDE.md` and `AGENTS.md` from shaping chat responses.
