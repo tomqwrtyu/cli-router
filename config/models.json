@@ -1,0 +1,26 @@
+{
+  "claude-sonnet": {
+    "provider": "claude",
+    "cliModel": "sonnet",
+    "enabled": true,
+    "supportsImages": false
+  },
+  "claude-opus": {
+    "provider": "claude",
+    "cliModel": "opus",
+    "enabled": true,
+    "supportsImages": false
+  },
+  "gpt-5.5": {
+    "provider": "codex",
+    "cliModel": "gpt-5.5",
+    "enabled": true,
+    "supportsImages": true
+  },
+  "gpt-5.4": {
+    "provider": "codex",
+    "cliModel": "gpt-5.4",
+    "enabled": true,
+    "supportsImages": true
+  }
+}

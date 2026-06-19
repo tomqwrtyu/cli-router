@@ -1,0 +1,27 @@
+{
+  "name": "cli-router",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Gemini-shaped API facade for local Claude and Codex CLI providers.",
+  "scripts": {
+    "start": "node src/server.js",
+    "init-env": "node scripts/init-env.js",
+    "deploy": "bash scripts/deploy.sh",
+    "deploy:edge": "bash scripts/deploy-edge-function.sh",
+    "service:install": "bash scripts/install-systemd.sh",
+    "check": "node --check src/server.js && node --check src/auth.js && node --check src/attachments.js && node --check src/cli.js && node --check src/gemini.js && node --check src/config.js",
+    "print-public-jwk": "node scripts/print-public-jwk.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "jose": "^5.9.6",
+    "pdf-parse": "^1.1.1"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "supabase": "^2.107.0"
+  }
+}
