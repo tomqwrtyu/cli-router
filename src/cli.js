@@ -20,7 +20,7 @@ function providerCommand(normalized, modelEntry, config) {
       args.push('--system-prompt', normalized.systemInstruction);
     }
     args.push(normalized.prompt);
-    return { command: 'claude', args };
+    return { command: config.providerBinaries.claude, args };
   }
 
   if (modelEntry.provider === 'codex') {
@@ -32,8 +32,6 @@ function providerCommand(normalized, modelEntry, config) {
       '--skip-git-repo-check',
       '--sandbox',
       'read-only',
-      '--ask-for-approval',
-      'never',
       '--cd',
       normalized.runDir,
       '--model',
@@ -45,16 +43,25 @@ function providerCommand(normalized, modelEntry, config) {
     for (const imagePath of normalized.imagePaths) {
       args.push('--image', imagePath);
     }
-    args.push(normalized.prompt);
-    return { command: 'codex', args };
+    args.push('-');
+    return { command: config.providerBinaries.codex, args, stdin: normalized.prompt };
   }
 
   throw new HttpError(400, 'INVALID_ARGUMENT', `Unsupported provider: ${modelEntry.provider}`);
 }
 
-function normalizeProviderError(provider, stderr, code) {
-  const lower = stderr.toLowerCase();
-  if (lower.includes('rate limit') || lower.includes('quota') || lower.includes('usage limit')) {
+function isQuotaOutput(output) {
+  const lower = output.toLowerCase();
+  return (
+    lower.includes('rate limit') ||
+    lower.includes('quota') ||
+    lower.includes('usage limit') ||
+    lower.includes('session limit')
+  );
+}
+
+function normalizeProviderError(provider, output, code) {
+  if (isQuotaOutput(output)) {
     return new HttpError(429, 'RESOURCE_EXHAUSTED', 'Provider quota exceeded or temporarily rate limited', {
       reason: 'provider_quota_exceeded',
       provider
@@ -63,17 +70,17 @@ function normalizeProviderError(provider, stderr, code) {
   return new HttpError(502, 'UNAVAILABLE', `Provider CLI failed with exit code ${code}`, {
     reason: 'provider_cli_failed',
     provider,
-    stderr: stderr.slice(-2000)
+    stderr: output.slice(-2000)
   });
 }
 
 export function runCliOnce(normalized, modelEntry, config) {
-  const { command, args } = providerCommand(normalized, modelEntry, config);
+  const { command, args, stdin } = providerCommand(normalized, modelEntry, config);
 
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: normalized.runDir,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
         NO_COLOR: '1'
@@ -86,6 +93,9 @@ export function runCliOnce(normalized, modelEntry, config) {
       child.kill('SIGTERM');
       setTimeout(() => child.kill('SIGKILL'), 2_000).unref();
     }, config.runTimeoutMs);
+    if (stdin) {
+      child.stdin.end(stdin);
+    }
 
     child.stdout.on('data', (chunk) => stdout.push(chunk));
     child.stderr.on('data', (chunk) => stderr.push(chunk));
@@ -108,7 +118,7 @@ export function runCliOnce(normalized, modelEntry, config) {
       const text = Buffer.concat(stdout).toString('utf8');
       const err = Buffer.concat(stderr).toString('utf8');
       if (code !== 0) {
-        reject(normalizeProviderError(modelEntry.provider, err, code));
+        reject(normalizeProviderError(modelEntry.provider, `${err}\n${text}`.trim(), code));
         return;
       }
       resolve(text.trim());
@@ -117,25 +127,35 @@ export function runCliOnce(normalized, modelEntry, config) {
 }
 
 export function streamCli(normalized, modelEntry, config, onText) {
-  const { command, args } = providerCommand(normalized, modelEntry, config);
+  const { command, args, stdin } = providerCommand(normalized, modelEntry, config);
 
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: normalized.runDir,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
         NO_COLOR: '1'
       }
     });
 
+    const stdout = [];
     const stderr = [];
     const timeout = setTimeout(() => {
       child.kill('SIGTERM');
       setTimeout(() => child.kill('SIGKILL'), 2_000).unref();
     }, config.runTimeoutMs);
+    if (stdin) {
+      child.stdin.end(stdin);
+    }
 
-    child.stdout.on('data', (chunk) => onText(chunk.toString('utf8')));
+    child.stdout.on('data', (chunk) => {
+      stdout.push(chunk);
+      const text = Buffer.concat(stdout).toString('utf8');
+      if (!isQuotaOutput(text)) {
+        onText(chunk.toString('utf8'));
+      }
+    });
     child.stderr.on('data', (chunk) => stderr.push(chunk));
     child.on('error', (error) => {
       clearTimeout(timeout);
@@ -154,8 +174,9 @@ export function streamCli(normalized, modelEntry, config, onText) {
         return;
       }
       const err = Buffer.concat(stderr).toString('utf8');
+      const text = Buffer.concat(stdout).toString('utf8');
       if (code !== 0) {
-        reject(normalizeProviderError(modelEntry.provider, err, code));
+        reject(normalizeProviderError(modelEntry.provider, `${err}\n${text}`.trim(), code));
         return;
       }
       resolve();

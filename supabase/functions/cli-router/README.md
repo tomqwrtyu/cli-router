@@ -22,7 +22,7 @@ You still need to set:
 Call the Supabase Edge Function with the router path appended:
 
 ```text
-POST https://<project-ref>.functions.supabase.co/cli-router/v1beta/models/claude-sonnet:streamGenerateContent?alt=sse
+POST https://<project-ref>.functions.supabase.co/cli-router/v1beta/models/claude-sonnet-latest:streamGenerateContent?alt=sse
 ```
 
 The request body is the Gemini-shaped JSON body.

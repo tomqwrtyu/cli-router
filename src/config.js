@@ -57,9 +57,13 @@ export function loadConfig() {
       claude: boolEnv('ENABLE_CLAUDE', true),
       codex: boolEnv('ENABLE_CODEX', true)
     },
+    providerBinaries: {
+      claude: process.env.CLAUDE_BIN || 'claude',
+      codex: process.env.CODEX_BIN || 'codex'
+    },
     modelRegistryPath: process.env.MODEL_REGISTRY_PATH || './config/models.json',
-    defaultModel: process.env.DEFAULT_MODEL || 'claude-sonnet',
-    runTimeoutMs: intEnv('RUN_TIMEOUT_MS', 120_000),
+    defaultModel: process.env.DEFAULT_MODEL || 'claude-sonnet-latest',
+    runTimeoutMs: intEnv('RUN_TIMEOUT_MS', 150_000),
     maxRequestBytes: intEnv('MAX_REQUEST_BYTES', 30 * 1024 * 1024),
     maxConcurrentRuns: intEnv('MAX_CONCURRENT_RUNS', 2),
     tmpDir: process.env.TMP_DIR || '/tmp/cli-router',

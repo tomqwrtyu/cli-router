@@ -98,7 +98,7 @@ into an existing function, then call:
 
 ```ts
 const upstream = await callCliRouter(
-  '/v1beta/models/claude-sonnet:streamGenerateContent?alt=sse',
+  '/v1beta/models/claude-sonnet-latest:streamGenerateContent?alt=sse',
   geminiShapedBody,
   { headers: { accept: 'text/event-stream' } }
 )
@@ -136,7 +136,7 @@ Models are public IDs in `config/models.json`. The router never passes arbitrary
 
 ```json
 {
-  "claude-sonnet": {
+  "claude-sonnet-latest": {
     "provider": "claude",
     "cliModel": "sonnet",
     "enabled": true,

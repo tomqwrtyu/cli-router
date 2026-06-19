@@ -32,7 +32,7 @@ Deno.serve(async (req) => {
   // Validate the user Supabase JWT and app quota before this point.
   // Do not forward the user's Supabase session token to cli-router.
   const body = new Uint8Array(await req.arrayBuffer())
-  const path = '/v1beta/models/claude-sonnet:streamGenerateContent'
+  const path = '/v1beta/models/claude-sonnet-latest:streamGenerateContent'
   const token = await signRouterJwt(path, 'POST', body)
 
   return fetch(`${ROUTER_URL}${path}?alt=sse`, {

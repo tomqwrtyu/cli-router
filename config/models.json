@@ -1,11 +1,11 @@
 {
-  "claude-sonnet": {
+  "claude-sonnet-latest": {
     "provider": "claude",
     "cliModel": "sonnet",
     "enabled": true,
     "supportsImages": false
   },
-  "claude-opus": {
+  "claude-opus-latest": {
     "provider": "claude",
     "cliModel": "opus",
     "enabled": true,
