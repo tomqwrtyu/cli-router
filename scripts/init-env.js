@@ -51,6 +51,7 @@ const env = [
   'MAX_REQUEST_BYTES=31457280',
   'MAX_CONCURRENT_RUNS=2',
   'TMP_DIR=/tmp/cli-router',
+  'IMAGE_PROMPT_TOKEN_ESTIMATE=256',
   '',
   'ALLOWED_FILE_URI_HOSTS=.supabase.co',
   'ALLOW_INSECURE_FILE_URIS=false',

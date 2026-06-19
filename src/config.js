@@ -67,6 +67,9 @@ export function loadConfig() {
     maxRequestBytes: intEnv('MAX_REQUEST_BYTES', 30 * 1024 * 1024),
     maxConcurrentRuns: intEnv('MAX_CONCURRENT_RUNS', 2),
     tmpDir: process.env.TMP_DIR || '/tmp/cli-router',
+    usage: {
+      imagePromptTokens: intEnv('IMAGE_PROMPT_TOKEN_ESTIMATE', 256)
+    },
     attachments: {
       allowedFileUriHosts: listEnv('ALLOWED_FILE_URI_HOSTS', []),
       allowInsecureFileUris: boolEnv('ALLOW_INSECURE_FILE_URIS', false),

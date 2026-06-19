@@ -27,7 +27,7 @@ function roleLabel(role) {
   return 'User';
 }
 
-export function geminiTextResponse(text, finishReason = 'STOP') {
+export function geminiTextResponse(text, finishReason = 'STOP', usageMetadata = null) {
   return {
     candidates: [
       {
@@ -37,7 +37,8 @@ export function geminiTextResponse(text, finishReason = 'STOP') {
         },
         finishReason
       }
-    ]
+    ],
+    ...(usageMetadata ? { usageMetadata } : {})
   };
 }
 
@@ -54,7 +55,7 @@ export function geminiTextChunk(text) {
   };
 }
 
-export function geminiDoneChunk() {
+export function geminiDoneChunk(usageMetadata = null) {
   return {
     candidates: [
       {
@@ -64,7 +65,26 @@ export function geminiDoneChunk() {
         },
         finishReason: 'STOP'
       }
-    ]
+    ],
+    ...(usageMetadata ? { usageMetadata } : {})
+  };
+}
+
+export function estimateUsageMetadata(normalized, outputText, config) {
+  const imageCount = normalized.imagePaths.length;
+  const inputChars = [normalized.systemInstruction, normalized.prompt]
+    .filter(Boolean)
+    .join('\n')
+    .length;
+  const promptTokenCount = Math.ceil(inputChars / 4) + imageCount * config.usage.imagePromptTokens;
+  const candidatesTokenCount = Math.ceil((outputText || '').length / 4);
+  return {
+    promptTokenCount,
+    candidatesTokenCount,
+    totalTokenCount: promptTokenCount + candidatesTokenCount,
+    estimated: true,
+    imageCount,
+    imagePromptTokenEstimate: config.usage.imagePromptTokens
   };
 }
 

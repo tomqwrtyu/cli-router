@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, loadModelRegistry } from './config.js';
 import { createJwtVerifier } from './auth.js';
-import { geminiDoneChunk, geminiTextChunk, geminiTextResponse, normalizeGeminiRequest } from './gemini.js';
+import { estimateUsageMetadata, geminiDoneChunk, geminiTextChunk, geminiTextResponse, normalizeGeminiRequest } from './gemini.js';
 import { geminiError } from './errors.js';
 import { readRequestBody, sendJson, sendSseHeaders, writeSseData } from './http.js';
 import { HttpError } from './errors.js';
@@ -77,14 +77,18 @@ async function handleGenerate({ req, res, url, config, registry, verifyJwt, limi
     normalized = await normalizeGeminiRequest(parseJson(rawBody), config, modelEntry);
     if (stream) {
       sendSseHeaders(res);
+      let accumulatedText = '';
       await streamCli(normalized, modelEntry, config, (text) => {
-        if (text) writeSseData(res, geminiTextChunk(text));
+        if (text) {
+          accumulatedText += text;
+          writeSseData(res, geminiTextChunk(text));
+        }
       });
-      writeSseData(res, geminiDoneChunk());
+      writeSseData(res, geminiDoneChunk(estimateUsageMetadata(normalized, accumulatedText, config)));
       res.end();
     } else {
       const text = await runCliOnce(normalized, modelEntry, config);
-      sendJson(res, 200, geminiTextResponse(text));
+      sendJson(res, 200, geminiTextResponse(text, 'STOP', estimateUsageMetadata(normalized, text, config)));
     }
   } finally {
     limiter.leave();

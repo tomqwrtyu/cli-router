@@ -198,8 +198,14 @@ Default limits:
 - Images: 15 MiB
 - JSON/TXT/PDF: 10 MiB
 - Injected document text: 50,000 chars
+- Estimated image prompt cost: 256 tokens per image (`IMAGE_PROMPT_TOKEN_ESTIMATE`)
 
 Codex supports images through `codex exec --image`. Claude image support is disabled in the default registry because the installed `claude -p` help does not expose a local image attachment flag.
+
+Router `usageMetadata` is estimated from the materialized prompt, not the raw
+request JSON. Inline image base64 is not counted as text; each image contributes
+`IMAGE_PROMPT_TOKEN_ESTIMATE` prompt tokens. Clients should prefer router
+`usageMetadata` over estimating from `JSON.stringify(contents)`.
 
 ## Provider Isolation
 
