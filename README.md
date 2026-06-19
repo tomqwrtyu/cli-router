@@ -159,6 +159,32 @@ ENABLE_CLAUDE=true
 ENABLE_CODEX=true
 ```
 
+## User Model Access
+
+The public Supabase `cli-router` Edge Function filters `GET /v1beta/models`
+with two layers:
+
+- live router availability from the Node router registry and provider `.env`
+- user-level ACL from `profiles.allowed_router_models`
+
+The result is an intersection. For example, a user may have
+`allowed_router_models = ['*']`, but Claude models still will not appear if
+`ENABLE_CLAUDE=false` on the Node router.
+
+`profiles.allowed_router_models` accepts router model IDs without the
+`models/` prefix:
+
+```sql
+update public.profiles
+set allowed_router_models = array['gpt-5.4', 'gpt-5.5']::text[]
+where id = '<user-id>';
+```
+
+Use `array['*']::text[]` only for admin users who may access every currently
+enabled router model. The Supabase Edge Function also checks the ACL before
+proxying `generateContent` or `streamGenerateContent`, so hiding a model from
+the UI is not the security boundary.
+
 ## Attachments
 
 `file_data.file_uri` is treated as a Supabase Storage signed URL. Configure allowed hosts with:
