@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_REF="${1:-sjpsrpohzcgxkruzrsex}"
+PROJECT_REF="${1:-}"
+if [ -z "$PROJECT_REF" ]; then
+  echo "Usage: $0 <supabase-project-ref>" >&2
+  exit 1
+fi
 ISSUER="supabase-edge:${PROJECT_REF}"
 AUDIENCE="cli-router"
 PRIVATE_JWK_PATH="secrets/router-private-jwk.json"

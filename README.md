@@ -51,7 +51,7 @@ Set that output as `ROUTER_JWT_PUBLIC_JWK`.
 Link Supabase and set router JWT secrets:
 
 ```bash
-./scripts/supabase-setup.sh sjpsrpohzcgxkruzrsex
+./scripts/supabase-setup.sh <supabase-project-ref>
 ```
 
 Deploy only the Edge Function:
