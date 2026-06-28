@@ -4,6 +4,9 @@
     "cliModel": "sonnet",
     "enabled": true,
     "supportsImages": false,
+    "access": {
+      "visibility": "restricted"
+    },
     "billing": {
       "unit": "credits_per_1m_tokens",
       "input": 2.0,
@@ -17,6 +20,9 @@
     "cliModel": "opus",
     "enabled": true,
     "supportsImages": false,
+    "access": {
+      "visibility": "admin"
+    },
     "billing": {
       "unit": "credits_per_1m_tokens",
       "input": 4.0,
@@ -30,6 +36,9 @@
     "cliModel": "gpt-5.5",
     "enabled": true,
     "supportsImages": true,
+    "access": {
+      "visibility": "default"
+    },
     "billing": {
       "unit": "credits_per_1m_tokens",
       "input": 4.0,
@@ -43,6 +52,9 @@
     "cliModel": "gpt-5.4",
     "enabled": true,
     "supportsImages": true,
+    "access": {
+      "visibility": "default"
+    },
     "billing": {
       "unit": "credits_per_1m_tokens",
       "input": 2.0,

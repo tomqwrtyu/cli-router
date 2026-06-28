@@ -18,7 +18,8 @@ You still need to set:
 - `ALLOWED_ORIGINS`: comma-separated frontend origins, for example `https://app.example.com`
 
 The function also uses Supabase's built-in `SUPABASE_URL` and
-`SUPABASE_SERVICE_ROLE_KEY` secrets to read `profiles.allowed_router_models`.
+`SUPABASE_SERVICE_ROLE_KEY` secrets to read router model overrides from
+`profiles`.
 
 ## Example frontend path
 
@@ -30,13 +31,20 @@ POST https://<project-ref>.functions.supabase.co/cli-router/v1beta/models/claude
 
 The request body is the Gemini-shaped JSON body.
 
-## Model ACL
+## Model Policy
 
 `GET /v1beta/models` returns only models that are both enabled by the Node
-router and allowed by `profiles.allowed_router_models` for the authenticated
-user.
+router and visible to the authenticated user.
 
-`allowed_router_models` values are router model IDs without the `models/`
-prefix. `["*"]` means all currently enabled router models. The same ACL is
-enforced before proxying generation requests, so callers cannot bypass the UI by
-guessing a model ID.
+Visibility comes from `config/models.json`:
+
+- `default`: visible to every authenticated user unless blocked for that user
+- `restricted`: hidden unless explicitly listed in `profiles.allowed_router_models`
+- `admin`: visible only when `profiles.allowed_router_models` contains `*`
+
+The default visible models are currently `gpt-5.4` and `gpt-5.5`.
+
+`allowed_router_models` and `blocked_router_models` values are router model IDs
+without the `models/` prefix. `["*"]` in `allowed_router_models` means all
+currently enabled router models. The same policy is enforced before proxying
+generation requests, so callers cannot bypass the UI by guessing a model ID.

@@ -141,6 +141,9 @@ Models are public IDs in `config/models.json`. The router never passes arbitrary
     "cliModel": "sonnet",
     "enabled": true,
     "supportsImages": false,
+    "access": {
+      "visibility": "restricted"
+    },
     "billing": {
       "unit": "credits_per_1m_tokens",
       "input": 2.0,
@@ -159,31 +162,56 @@ ENABLE_CLAUDE=true
 ENABLE_CODEX=true
 ```
 
-## User Model Access
+## Model Access
 
 The public Supabase `cli-router` Edge Function filters `GET /v1beta/models`
-with two layers:
+with three layers:
 
 - live router availability from the Node router registry and provider `.env`
-- user-level ACL from `profiles.allowed_router_models`
+- global model visibility from `config/models.json`
+- user-level overrides from `profiles.allowed_router_models` and `profiles.blocked_router_models`
 
-The result is an intersection. For example, a user may have
+The result is an intersection. For example, a user may have admin access with
 `allowed_router_models = ['*']`, but Claude models still will not appear if
 `ENABLE_CLAUDE=false` on the Node router.
 
-`profiles.allowed_router_models` accepts router model IDs without the
-`models/` prefix:
+`access.visibility` values:
+
+- `default`: visible to every authenticated user unless blocked for that user
+- `restricted`: hidden unless explicitly listed in `allowed_router_models`
+- `admin`: visible only when `allowed_router_models` contains `*`
+
+The default visible models are currently `gpt-5.4` and `gpt-5.5`.
+
+`profiles.allowed_router_models` is now an override list, not the full model
+list for normal users. It accepts router model IDs without the `models/` prefix:
 
 ```sql
 update public.profiles
-set allowed_router_models = array['gpt-5.4', 'gpt-5.5']::text[]
+set allowed_router_models = array['claude-sonnet-latest']::text[]
 where id = '<user-id>';
 ```
 
 Use `array['*']::text[]` only for admin users who may access every currently
-enabled router model. The Supabase Edge Function also checks the ACL before
-proxying `generateContent` or `streamGenerateContent`, so hiding a model from
-the UI is not the security boundary.
+enabled router model:
+
+```sql
+update public.profiles
+set allowed_router_models = array['*']::text[]
+where id = '<admin-user-id>';
+```
+
+Block a default-visible model for one user with:
+
+```sql
+update public.profiles
+set blocked_router_models = array['gpt-5.5']::text[]
+where id = '<user-id>';
+```
+
+The Supabase Edge Function also checks the policy before proxying
+`generateContent` or `streamGenerateContent`, so hiding a model from the UI is
+not the security boundary.
 
 ## Attachments
 

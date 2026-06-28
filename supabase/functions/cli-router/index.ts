@@ -30,7 +30,16 @@ type RouterModel = {
   supportedGenerationMethods?: string[]
   provider?: string
   supportsImages?: boolean
+  access?: {
+    visibility?: string
+  }
   billing?: Record<string, unknown> | null
+}
+
+type UserModelPolicy = {
+  allowedModels: Set<string>
+  blockedModels: Set<string>
+  allowAll: boolean
 }
 
 async function sha256Hex(body: Uint8Array): Promise<string> {
@@ -114,34 +123,80 @@ function modelIdFromModelName(name: string): string {
   return name.replace(/^models\//, '')
 }
 
-async function getAllowedRouterModels(userId: string): Promise<Set<string>> {
+function stringSet(value: unknown): Set<string> {
+  return new Set(
+    Array.isArray(value)
+      ? value
+        .map((item: unknown) => typeof item === 'string' ? item.trim() : '')
+        .filter(Boolean)
+      : []
+  )
+}
+
+async function getUserModelPolicy(userId: string): Promise<UserModelPolicy> {
   const { data, error } = await supabaseAdmin
     .from('profiles')
-    .select('allowed_router_models')
+    .select('allowed_router_models, blocked_router_models')
     .eq('id', userId)
     .maybeSingle()
 
   if (error) {
-    console.error('Router model ACL lookup failed', error)
-    throw new Error('Router model ACL lookup failed')
+    console.error('Router model policy lookup failed', error)
+    throw new Error('Router model policy lookup failed')
   }
 
-  const models = Array.isArray(data?.allowed_router_models)
-    ? data.allowed_router_models
-      .map((model: unknown) => typeof model === 'string' ? model.trim() : '')
-      .filter(Boolean)
-    : []
-
-  return new Set(models)
+  const allowedModels = stringSet(data?.allowed_router_models)
+  return {
+    allowedModels,
+    blockedModels: stringSet(data?.blocked_router_models),
+    allowAll: allowedModels.has('*')
+  }
 }
 
-function isModelAllowed(allowedModels: Set<string>, modelId: string): boolean {
-  return allowedModels.has('*') || allowedModels.has(modelId)
+function modelVisibility(model: RouterModel): string {
+  const visibility = model.access?.visibility
+  if (visibility === 'default' || visibility === 'restricted' || visibility === 'admin') {
+    return visibility
+  }
+  return 'restricted'
 }
 
-function filterModelsForUser(models: RouterModel[], allowedModels: Set<string>): RouterModel[] {
-  if (allowedModels.has('*')) return models
-  return models.filter((model) => isModelAllowed(allowedModels, modelIdFromModelName(model.name)))
+function isModelAllowed(policy: UserModelPolicy, model: RouterModel): boolean {
+  if (policy.allowAll) return true
+
+  const modelId = modelIdFromModelName(model.name)
+  if (policy.blockedModels.has(modelId)) return false
+
+  const visibility = modelVisibility(model)
+  if (visibility === 'default') return true
+  if (visibility === 'restricted') return policy.allowedModels.has(modelId)
+  return false
+}
+
+function filterModelsForUser(models: RouterModel[], policy: UserModelPolicy): RouterModel[] {
+  return models.filter((model) => isModelAllowed(policy, model))
+}
+
+async function fetchRouterModelsPayload(): Promise<{ payload: Record<string, unknown>; models: RouterModel[] }> {
+  const body = new Uint8Array()
+  const path = '/v1beta/models'
+  const token = await signRouterJwt(path, 'GET', body)
+  const routerUrl = new URL(path, ROUTER_URL)
+  const upstream = await fetch(routerUrl, {
+    method: 'GET',
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: 'application/json'
+    }
+  })
+
+  if (!upstream.ok) {
+    throw new Error(`Router models fetch failed: ${upstream.status} ${await upstream.text()}`)
+  }
+
+  const payload = await upstream.json()
+  const models = Array.isArray(payload.models) ? payload.models : []
+  return { payload, models }
 }
 
 Deno.serve(async (req) => {
@@ -162,10 +217,32 @@ Deno.serve(async (req) => {
   const routerUrl = new URL(routerPath, ROUTER_URL)
   routerUrl.search = incomingUrl.search
 
-  const allowedModels = await getAllowedRouterModels(userId)
+  const userPolicy = await getUserModelPolicy(userId)
   const requestedModel = modelIdFromRouterPath(routerUrl.pathname)
-  if (requestedModel && !isModelAllowed(allowedModels, requestedModel)) {
-    return jsonResponse({ error: 'Model not allowed' }, 403, cors)
+
+  if (req.method === 'GET' && routerUrl.pathname === '/v1beta/models') {
+    const { payload, models } = await fetchRouterModelsPayload()
+    const headers = new Headers()
+    for (const [key, value] of Object.entries(cors)) {
+      headers.set(key, value)
+    }
+    headers.set('content-type', 'application/json')
+
+    return new Response(JSON.stringify({ ...payload, models: filterModelsForUser(models, userPolicy) }), {
+      status: 200,
+      headers
+    })
+  }
+
+  if (requestedModel) {
+    const { models } = await fetchRouterModelsPayload()
+    const requestedRouterModel = models.find((model) => modelIdFromModelName(model.name) === requestedModel)
+    if (!requestedRouterModel) {
+      return jsonResponse({ error: 'Model not enabled' }, 404, cors)
+    }
+    if (!isModelAllowed(userPolicy, requestedRouterModel)) {
+      return jsonResponse({ error: 'Model not allowed' }, 403, cors)
+    }
   }
 
   const body = req.method === 'GET' ? new Uint8Array() : new Uint8Array(await req.arrayBuffer())
@@ -180,28 +257,6 @@ Deno.serve(async (req) => {
     },
     body: req.method === 'GET' ? undefined : body
   })
-
-  if (req.method === 'GET' && routerUrl.pathname === '/v1beta/models') {
-    const headers = new Headers(upstream.headers)
-    for (const [key, value] of Object.entries(cors)) {
-      headers.set(key, value)
-    }
-    headers.set('content-type', 'application/json')
-
-    if (!upstream.ok) {
-      return new Response(await upstream.text(), {
-        status: upstream.status,
-        headers
-      })
-    }
-
-    const payload = await upstream.json()
-    const models = Array.isArray(payload.models) ? payload.models : []
-    return new Response(JSON.stringify({ ...payload, models: filterModelsForUser(models, allowedModels) }), {
-      status: upstream.status,
-      headers
-    })
-  }
 
   const headers = new Headers(upstream.headers)
   for (const [key, value] of Object.entries(cors)) {

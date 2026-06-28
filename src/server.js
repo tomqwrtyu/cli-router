@@ -112,6 +112,7 @@ async function handleModels({ req, res, url, config, registry, verifyJwt }) {
       supportedGenerationMethods: ['generateContent', 'streamGenerateContent'],
       provider: entry.provider,
       supportsImages: Boolean(entry.supportsImages),
+      access: entry.access,
       billing: entry.billing || null
     }));
   sendJson(res, 200, { models });

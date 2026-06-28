@@ -39,6 +39,8 @@ function jsonEnv(name, fallback = null) {
   }
 }
 
+const MODEL_VISIBILITIES = new Set(['default', 'restricted', 'admin']);
+
 export function loadConfig() {
   return {
     env: process.env.NODE_ENV || 'development',
@@ -101,6 +103,10 @@ export async function loadModelRegistry(config) {
     }
     if (!entry.cliModel || typeof entry.cliModel !== 'string') {
       throw new Error(`Missing cliModel for ${modelId}`);
+    }
+    const visibility = entry.access?.visibility;
+    if (!MODEL_VISIBILITIES.has(visibility)) {
+      throw new Error(`Invalid or missing access.visibility for ${modelId}`);
     }
   }
   return registry;
