@@ -31,9 +31,10 @@
       "estimatedUsage": true
     }
   },
-  "gpt-5.5": {
+  "gpt-5.6-sol": {
     "provider": "codex",
-    "cliModel": "gpt-5.5",
+    "cliModel": "gpt-5.6-sol",
+    "reasoningEffort": "medium",
     "enabled": true,
     "supportsImages": true,
     "access": {
@@ -41,15 +42,16 @@
     },
     "billing": {
       "unit": "credits_per_1m_tokens",
-      "input": 4.0,
-      "output": 20.0,
+      "input": 5.0,
+      "output": 30.0,
       "costMultiplier": 2.0,
       "estimatedUsage": true
     }
   },
-  "gpt-5.4": {
+  "gpt-5.6-terra": {
     "provider": "codex",
-    "cliModel": "gpt-5.4",
+    "cliModel": "gpt-5.6-terra",
+    "reasoningEffort": "medium",
     "enabled": true,
     "supportsImages": true,
     "access": {
@@ -57,8 +59,25 @@
     },
     "billing": {
       "unit": "credits_per_1m_tokens",
-      "input": 2.0,
-      "output": 12.0,
+      "input": 2.5,
+      "output": 15.0,
+      "costMultiplier": 2.0,
+      "estimatedUsage": true
+    }
+  },
+  "gpt-5.6-luna": {
+    "provider": "codex",
+    "cliModel": "gpt-5.6-luna",
+    "reasoningEffort": "medium",
+    "enabled": true,
+    "supportsImages": true,
+    "access": {
+      "visibility": "default"
+    },
+    "billing": {
+      "unit": "credits_per_1m_tokens",
+      "input": 1.0,
+      "output": 6.0,
       "costMultiplier": 2.0,
       "estimatedUsage": true
     }

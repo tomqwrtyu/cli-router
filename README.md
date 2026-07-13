@@ -181,7 +181,9 @@ The result is an intersection. For example, a user may have admin access with
 - `restricted`: hidden unless explicitly listed in `allowed_router_models`
 - `admin`: visible only when `allowed_router_models` contains `*`
 
-The default visible models are currently `gpt-5.4` and `gpt-5.5`.
+The default visible models are currently `gpt-5.6-sol`, `gpt-5.6-terra`, and
+`gpt-5.6-luna`. Codex calls pin `model_reasoning_effort` to `medium` per registry
+entry, independent of the host user's global Codex configuration.
 
 `profiles.allowed_router_models` is now an override list, not the full model
 list for normal users. It accepts router model IDs without the `models/` prefix:
@@ -205,7 +207,7 @@ Block a default-visible model for one user with:
 
 ```sql
 update public.profiles
-set blocked_router_models = array['gpt-5.5']::text[]
+set blocked_router_models = array['gpt-5.6-sol']::text[]
 where id = '<user-id>';
 ```
 

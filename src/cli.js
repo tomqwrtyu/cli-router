@@ -36,7 +36,9 @@ function providerCommand(normalized, modelEntry, config) {
       '--cd',
       normalized.runDir,
       '--model',
-      modelEntry.cliModel
+      modelEntry.cliModel,
+      '-c',
+      `model_reasoning_effort=${JSON.stringify(modelEntry.reasoningEffort)}`
     ];
     if (normalized.systemInstruction) {
       args.push('-c', `developer_instructions=${JSON.stringify(normalized.systemInstruction)}`);

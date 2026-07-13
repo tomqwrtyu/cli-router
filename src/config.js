@@ -104,6 +104,9 @@ export async function loadModelRegistry(config) {
     if (!entry.cliModel || typeof entry.cliModel !== 'string') {
       throw new Error(`Missing cliModel for ${modelId}`);
     }
+    if (entry.provider === 'codex' && entry.reasoningEffort !== 'medium') {
+      throw new Error(`Codex model ${modelId} must use medium reasoning effort`);
+    }
     const visibility = entry.access?.visibility;
     if (!MODEL_VISIBILITIES.has(visibility)) {
       throw new Error(`Invalid or missing access.visibility for ${modelId}`);

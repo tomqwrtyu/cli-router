@@ -42,7 +42,8 @@ Visibility comes from `config/models.json`:
 - `restricted`: hidden unless explicitly listed in `profiles.allowed_router_models`
 - `admin`: visible only when `profiles.allowed_router_models` contains `*`
 
-The default visible models are currently `gpt-5.4` and `gpt-5.5`.
+The default visible models are currently `gpt-5.6-sol`, `gpt-5.6-terra`, and
+`gpt-5.6-luna`.
 
 `allowed_router_models` and `blocked_router_models` values are router model IDs
 without the `models/` prefix. `["*"]` in `allowed_router_models` means all
