@@ -31,6 +31,22 @@
       "estimatedUsage": true
     }
   },
+  "claude-fable-latest": {
+    "provider": "claude",
+    "cliModel": "fable",
+    "enabled": true,
+    "supportsImages": false,
+    "access": {
+      "visibility": "admin"
+    },
+    "billing": {
+      "unit": "credits_per_1m_tokens",
+      "input": 10.0,
+      "output": 50.0,
+      "costMultiplier": 2.0,
+      "estimatedUsage": true
+    }
+  },
   "gpt-5.6-sol": {
     "provider": "codex",
     "cliModel": "gpt-5.6-sol",
