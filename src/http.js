@@ -26,12 +26,13 @@ export function sendJson(res, statusCode, body, headers = {}) {
   res.end(raw);
 }
 
-export function sendSseHeaders(res) {
+export function sendSseHeaders(res, headers = {}) {
   res.writeHead(200, {
     'content-type': 'text/event-stream; charset=utf-8',
     'cache-control': 'no-cache, no-transform',
     connection: 'keep-alive',
-    'x-accel-buffering': 'no'
+    'x-accel-buffering': 'no',
+    ...headers
   });
 }
 

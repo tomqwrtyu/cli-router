@@ -171,11 +171,15 @@ export async function normalizeGeminiRequest(body, config, modelEntry) {
   const runId = crypto.randomUUID();
   const runDir = await fs.mkdtemp(path.join(config.tmpDir || os.tmpdir(), `${runId}-`));
   const systemInstruction = collectTextParts(body.systemInstruction);
+  const systemInstructionPath = systemInstruction ? path.join(runDir, 'system-prompt.txt') : null;
   const contextBlocks = [];
   const imagePaths = [];
   const images = [];
 
   try {
+    if (systemInstructionPath) {
+      await fs.writeFile(systemInstructionPath, systemInstruction, { mode: 0o600 });
+    }
     for (const content of contents) {
       const role = roleLabel(content.role);
       const parts = Array.isArray(content.parts) ? content.parts : [];
@@ -228,6 +232,7 @@ export async function normalizeGeminiRequest(body, config, modelEntry) {
       runId,
       runDir,
       systemInstruction,
+      systemInstructionPath,
       prompt,
       imagePaths,
       images,

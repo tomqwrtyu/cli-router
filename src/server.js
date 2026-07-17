@@ -3,6 +3,8 @@ import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, loadModelRegistry } from './config.js';
 import { createJwtVerifier } from './auth.js';
+import { buildCallbackEvent, callbackContextFromJwt, createCallbackClient } from './callback.js';
+import { createCorsPolicy } from './cors.js';
 import { estimateUsageMetadata, geminiDoneChunk, geminiTextChunk, geminiTextResponse, normalizeGeminiRequest } from './gemini.js';
 import { geminiError } from './errors.js';
 import { readRequestBody, sendJson, sendSseHeaders, writeSseData } from './http.js';
@@ -54,7 +56,17 @@ class RunLimiter {
   }
 }
 
-async function handleGenerate({ req, res, url, config, registry, verifyJwt, limiter }) {
+async function handleGenerate({
+  req,
+  res,
+  url,
+  config,
+  registry,
+  verifyJwt,
+  limiter,
+  callbackClient,
+  responseHeaders
+}) {
   const match = routePattern.exec(url.pathname);
   if (!match) return false;
 
@@ -67,16 +79,24 @@ async function handleGenerate({ req, res, url, config, registry, verifyJwt, limi
   }
 
   const rawBody = await readRequestBody(req, config.maxRequestBytes);
-  await verifyJwt(req, url, rawBody);
+  const jwtPayload = await verifyJwt(req, url, rawBody);
+  const callbackContext = callbackContextFromJwt(jwtPayload, callbackClient.enabled);
+  if (callbackContext) {
+    responseHeaders['x-router-request-id'] = callbackContext.requestId;
+  }
   const modelEntry = registry[modelId];
-  assertProviderEnabled(modelId, modelEntry, config);
 
-  limiter.enter();
+  let limiterEntered = false;
   let normalized;
+  let callbackEvent = null;
+  let caughtError = null;
   try {
+    assertProviderEnabled(modelId, modelEntry, config);
+    limiter.enter();
+    limiterEntered = true;
     normalized = await normalizeGeminiRequest(parseJson(rawBody), config, modelEntry);
     if (stream) {
-      sendSseHeaders(res);
+      sendSseHeaders(res, responseHeaders);
       let accumulatedText = '';
       await streamCli(normalized, modelEntry, config, (text) => {
         if (text) {
@@ -84,23 +104,77 @@ async function handleGenerate({ req, res, url, config, registry, verifyJwt, limi
           writeSseData(res, geminiTextChunk(text));
         }
       });
-      writeSseData(res, geminiDoneChunk(estimateUsageMetadata(normalized, accumulatedText, config)));
+      if (!accumulatedText.trim()) {
+        throw new HttpError(502, 'UNAVAILABLE', 'Provider returned an empty response', {
+          reason: 'provider_empty_output',
+          provider: modelEntry.provider
+        });
+      }
+      const usageMetadata = estimateUsageMetadata(normalized, accumulatedText, config);
+      if (callbackContext) {
+        usageMetadata.routerRequestId = callbackContext.requestId;
+        callbackEvent = buildCallbackEvent({
+          context: callbackContext,
+          modelId,
+          provider: modelEntry.provider,
+          usageMetadata
+        });
+      }
+      writeSseData(res, geminiDoneChunk(usageMetadata));
       res.end();
     } else {
       const text = await runCliOnce(normalized, modelEntry, config);
-      sendJson(res, 200, geminiTextResponse(text, 'STOP', estimateUsageMetadata(normalized, text, config)));
+      if (!text.trim()) {
+        throw new HttpError(502, 'UNAVAILABLE', 'Provider returned an empty response', {
+          reason: 'provider_empty_output',
+          provider: modelEntry.provider
+        });
+      }
+      const usageMetadata = estimateUsageMetadata(normalized, text, config);
+      if (callbackContext) {
+        usageMetadata.routerRequestId = callbackContext.requestId;
+        callbackEvent = buildCallbackEvent({
+          context: callbackContext,
+          modelId,
+          provider: modelEntry.provider,
+          usageMetadata
+        });
+      }
+      sendJson(res, 200, geminiTextResponse(text, 'STOP', usageMetadata), responseHeaders);
+    }
+  } catch (error) {
+    caughtError = error;
+    if (callbackContext) {
+      callbackEvent = buildCallbackEvent({
+        context: callbackContext,
+        modelId,
+        provider: modelEntry?.provider || null,
+        error
+      });
     }
   } finally {
-    limiter.leave();
+    if (limiterEntered) limiter.leave();
     if (normalized?.runDir) {
       await fs.rm(normalized.runDir, { recursive: true, force: true });
     }
   }
 
+  if (callbackEvent) {
+    const delivery = callbackClient.deliver(callbackEvent).catch((error) => {
+      console.error(
+        `Router callback delivery failed request_id=${callbackContext.requestId} event=${callbackEvent.event}: ${error.message}`
+      );
+    });
+    if (caughtError) void delivery;
+    else await delivery;
+  }
+
+  if (caughtError) throw caughtError;
+
   return true;
 }
 
-async function handleModels({ req, res, url, config, registry, verifyJwt }) {
+async function handleModels({ req, res, url, config, registry, verifyJwt, responseHeaders }) {
   if (req.method !== 'GET' || url.pathname !== '/v1beta/models') return false;
   const rawBody = Buffer.alloc(0);
   await verifyJwt(req, url, rawBody);
@@ -115,13 +189,13 @@ async function handleModels({ req, res, url, config, registry, verifyJwt }) {
       access: entry.access,
       billing: entry.billing || null
     }));
-  sendJson(res, 200, { models });
+  sendJson(res, 200, { models }, responseHeaders);
   return true;
 }
 
-function handleHealth(req, res, url) {
+function handleHealth(req, res, url, responseHeaders) {
   if (req.method === 'GET' && url.pathname === '/health') {
-    sendJson(res, 200, { ok: true });
+    sendJson(res, 200, { ok: true }, responseHeaders);
     return true;
   }
   return false;
@@ -133,18 +207,33 @@ export async function main() {
   const registry = await loadModelRegistry(config);
   const verifyJwt = await createJwtVerifier(config);
   const limiter = new RunLimiter(config.maxConcurrentRuns);
+  const corsPolicy = createCorsPolicy(config.cors);
+  const callbackClient = createCallbackClient(config.callback);
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    let responseHeaders = {};
     try {
-      if (handleHealth(req, res, url)) return;
-      if (await handleModels({ req, res, url, config, registry, verifyJwt })) return;
-      if (req.method === 'POST' && await handleGenerate({ req, res, url, config, registry, verifyJwt, limiter })) return;
+      responseHeaders = corsPolicy.headersForRequest(req);
+      if (corsPolicy.handlePreflight(req, res, responseHeaders)) return;
+      if (handleHealth(req, res, url, responseHeaders)) return;
+      if (await handleModels({ req, res, url, config, registry, verifyJwt, responseHeaders })) return;
+      if (req.method === 'POST' && await handleGenerate({
+        req,
+        res,
+        url,
+        config,
+        registry,
+        verifyJwt,
+        limiter,
+        callbackClient,
+        responseHeaders
+      })) return;
       throw new HttpError(404, 'NOT_FOUND', 'Route not found');
     } catch (error) {
       const { statusCode, body } = geminiError(error);
       if (!res.headersSent) {
-        sendJson(res, statusCode, body);
+        sendJson(res, statusCode, body, responseHeaders);
       } else {
         writeSseData(res, body);
         res.end();

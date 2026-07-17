@@ -20,6 +20,14 @@ function intEnv(name, fallback) {
   return parsed;
 }
 
+function positiveIntEnv(name, fallback) {
+  const value = intEnv(name, fallback);
+  if (value < 1) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return value;
+}
+
 function listEnv(name, fallback = []) {
   const value = process.env[name];
   if (!value) return fallback;
@@ -42,6 +50,21 @@ function jsonEnv(name, fallback = null) {
 const MODEL_VISIBILITIES = new Set(['default', 'restricted', 'admin']);
 
 export function loadConfig() {
+  const callbackUrl = process.env.ROUTER_CALLBACK_URL || '';
+  const callbackSecret = process.env.ROUTER_CALLBACK_SECRET || '';
+  if (Boolean(callbackUrl) !== Boolean(callbackSecret)) {
+    throw new Error('ROUTER_CALLBACK_URL and ROUTER_CALLBACK_SECRET must be configured together');
+  }
+  if (callbackUrl) {
+    const parsedCallbackUrl = new URL(callbackUrl);
+    if (parsedCallbackUrl.protocol !== 'https:' && process.env.NODE_ENV === 'production') {
+      throw new Error('ROUTER_CALLBACK_URL must use HTTPS in production');
+    }
+    if (Buffer.byteLength(callbackSecret) < 32) {
+      throw new Error('ROUTER_CALLBACK_SECRET must be at least 32 bytes');
+    }
+  }
+
   return {
     env: process.env.NODE_ENV || 'development',
     host: process.env.HOST || '127.0.0.1',
@@ -69,6 +92,16 @@ export function loadConfig() {
     maxRequestBytes: intEnv('MAX_REQUEST_BYTES', 30 * 1024 * 1024),
     maxConcurrentRuns: intEnv('MAX_CONCURRENT_RUNS', 2),
     tmpDir: process.env.TMP_DIR || '/tmp/cli-router',
+    cors: {
+      allowedOrigins: listEnv('CORS_ALLOWED_ORIGINS', []),
+      maxAgeSeconds: intEnv('CORS_MAX_AGE_SECONDS', 600)
+    },
+    callback: {
+      url: callbackUrl,
+      secret: callbackSecret,
+      timeoutMs: intEnv('ROUTER_CALLBACK_TIMEOUT_MS', 5_000),
+      maxAttempts: positiveIntEnv('ROUTER_CALLBACK_MAX_ATTEMPTS', 3)
+    },
     usage: {
       imageFallbackTokens: intEnv('IMAGE_PROMPT_TOKEN_ESTIMATE', 258),
       imageTileTokens: intEnv('IMAGE_PROMPT_TILE_TOKENS', 258),

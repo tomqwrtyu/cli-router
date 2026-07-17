@@ -19,13 +19,25 @@ async function sha256Hex(body: Uint8Array): Promise<string> {
     .join('')
 }
 
-async function signRouterJwt(path: string, method: string, body: Uint8Array): Promise<string> {
+export type RouterCallbackClaims = {
+  request_id: string
+  user_id: string
+  action: 'condense_memory' | 'increment_memory'
+}
+
+async function signRouterJwt(
+  path: string,
+  method: string,
+  body: Uint8Array,
+  callbackClaims?: RouterCallbackClaims
+): Promise<string> {
   const now = Math.floor(Date.now() / 1000)
   return await new SignJWT({
     sub: 'supabase-edge-function',
     method,
     path,
-    body_sha256: await sha256Hex(body)
+    body_sha256: await sha256Hex(body),
+    ...callbackClaims
   })
     .setProtectedHeader({ alg: 'ES256', typ: 'JWT', kid: privateJwk.kid })
     .setIssuer(ROUTER_JWT_ISSUER)
@@ -36,10 +48,15 @@ async function signRouterJwt(path: string, method: string, body: Uint8Array): Pr
     .sign(privateKey)
 }
 
-export async function callCliRouter(path: string, body: unknown, init: RequestInit = {}): Promise<Response> {
+export async function callCliRouter(
+  path: string,
+  body: unknown,
+  init: RequestInit = {},
+  callbackClaims?: RouterCallbackClaims
+): Promise<Response> {
   const method = init.method || 'POST'
   const rawBody = new TextEncoder().encode(JSON.stringify(body))
-  const token = await signRouterJwt(path, method, rawBody)
+  const token = await signRouterJwt(path, method, rawBody, callbackClaims)
   const url = new URL(path, ROUTER_URL)
 
   return fetch(url, {

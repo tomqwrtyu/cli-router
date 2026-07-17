@@ -7,11 +7,13 @@
   "scripts": {
     "start": "node src/server.js",
     "init-env": "node scripts/init-env.js",
+    "configure:callback": "node scripts/configure-callback.js",
+    "sync:callback-secret": "node scripts/sync-callback-secret.js",
     "deploy": "bash scripts/deploy.sh",
     "deploy:edge": "bash scripts/deploy-edge-function.sh",
     "service:install": "bash scripts/install-systemd.sh",
-    "test": "node test/cli.test.js",
-    "check": "node --check src/server.js && node --check src/auth.js && node --check src/attachments.js && node --check src/cli.js && node --check src/gemini.js && node --check src/config.js && npm test",
+    "test": "node test/index.js",
+    "check": "node --check src/server.js && node --check src/auth.js && node --check src/attachments.js && node --check src/callback.js && node --check src/cli.js && node --check src/cors.js && node --check src/gemini.js && node --check src/config.js && node --check scripts/configure-callback.js && node --check scripts/sync-callback-secret.js && npm test",
     "print-public-jwk": "node scripts/print-public-jwk.js"
   },
   "dependencies": {

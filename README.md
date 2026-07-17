@@ -18,6 +18,8 @@ Frontend
 
 Do not forward the user's Supabase session token to this router. The router JWT is a separate service-to-service token with a 60 second lifetime, `jti` replay protection, and a `body_sha256` claim bound to the exact request body.
 
+For memory condensation/increment operations, the router can send a signed completion callback to a dedicated Edge Function. The complete JWT claims, HMAC format, payload, retries, and idempotency requirements are defined in [docs/edge-memory-callback-contract.md](docs/edge-memory-callback-contract.md).
+
 ## Setup
 
 ```bash
@@ -73,6 +75,16 @@ npm run deploy -- https://your-router.example.com
 ```
 
 `ROUTER_URL` must be a public HTTPS URL reachable from Supabase Edge Functions. If this Node process listens on `127.0.0.1`, put it behind a reverse proxy such as Caddy, Nginx, or a tunnel before setting `ROUTER_URL`.
+
+Configure exact browser origins and the optional callback destination in `.env`:
+
+```env
+CORS_ALLOWED_ORIGINS=https://www.example.com,https://example.com
+ROUTER_CALLBACK_URL=https://your-project.supabase.co/functions/v1/router-callback
+ROUTER_CALLBACK_SECRET=replace-with-at-least-32-random-bytes
+```
+
+Requests from Edge Functions without an `Origin` header are unaffected by the browser CORS allowlist. The callback URL and secret must either both be configured or both be empty.
 
 ## Endpoints
 
@@ -242,7 +254,7 @@ as a fallback when dimensions cannot be parsed. Clients should prefer router
 
 Provider CLIs are run as one-shot chat backends, not coding agents:
 
-- Claude uses `--safe-mode`, `--no-session-persistence`, disabled slash commands, no tools, and the request `systemInstruction` as `--system-prompt`. `--safe-mode` disables CLAUDE.md, hooks, skills, plugins, MCP, custom commands, agents, output styles, workflows, and other local customizations while preserving normal Claude Code auth.
-- Codex runs with `--ephemeral`, `--ignore-user-config`, `--ignore-rules`, `--sandbox read-only`, and a temporary `--cd` directory. Prompts are passed through stdin, and images are passed with `--image`.
+- Claude uses `--safe-mode`, `--no-session-persistence`, disabled slash commands, no tools, and a temporary `--system-prompt-file`. The conversation is passed through stdin. `--safe-mode` disables CLAUDE.md, hooks, skills, plugins, MCP, custom commands, agents, output styles, workflows, and other local customizations while preserving normal Claude Code auth.
+- Codex runs with `--ephemeral`, `--ignore-user-config`, `--ignore-rules`, `--sandbox read-only`, and a temporary `--cd` directory. Application instructions and conversation text are passed through stdin, and images are passed with `--image`.
 
-This keeps global/project coding instructions such as `CLAUDE.md` and `AGENTS.md` from shaping chat responses.
+This keeps request-sized text out of process arguments and prevents global/project coding instructions such as `CLAUDE.md` and `AGENTS.md` from shaping chat responses.

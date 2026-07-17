@@ -18,7 +18,13 @@ export function providerCommand(normalized, modelEntry, config) {
       modelEntry.cliModel
     ];
     if (normalized.systemInstruction) {
-      args.push('--system-prompt', normalized.systemInstruction);
+      if (!normalized.systemInstructionPath) {
+        throw new HttpError(500, 'INTERNAL', 'Materialized system prompt is missing', {
+          reason: 'system_prompt_file_missing',
+          provider: modelEntry.provider
+        });
+      }
+      args.push('--system-prompt-file', normalized.systemInstructionPath);
     }
     return { command: config.providerBinaries.claude, args, stdin: normalized.prompt };
   }
@@ -39,14 +45,26 @@ export function providerCommand(normalized, modelEntry, config) {
       '-c',
       `model_reasoning_effort=${JSON.stringify(modelEntry.reasoningEffort)}`
     ];
-    if (normalized.systemInstruction) {
-      args.push('-c', `developer_instructions=${JSON.stringify(normalized.systemInstruction)}`);
-    }
+    const stdin = normalized.systemInstruction
+      ? [
+          '<application_instructions>',
+          normalized.systemInstruction,
+          '</application_instructions>',
+          '',
+          '<conversation>',
+          normalized.prompt,
+          '</conversation>'
+        ].join('\n')
+      : normalized.prompt;
+    args.push(
+      '-c',
+      'developer_instructions="Follow the application_instructions block from stdin, then answer the conversation. Return only the answer."'
+    );
     for (const imagePath of normalized.imagePaths) {
       args.push('--image', imagePath);
     }
     args.push('-');
-    return { command: config.providerBinaries.codex, args, stdin: normalized.prompt };
+    return { command: config.providerBinaries.codex, args, stdin };
   }
 
   throw new HttpError(400, 'INVALID_ARGUMENT', `Unsupported provider: ${modelEntry.provider}`);
