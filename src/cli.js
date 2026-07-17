@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { HttpError } from './errors.js';
 
-function providerCommand(normalized, modelEntry, config) {
+export function providerCommand(normalized, modelEntry, config) {
   if (modelEntry.provider === 'claude') {
     const args = [
       '-p',
@@ -20,8 +20,7 @@ function providerCommand(normalized, modelEntry, config) {
     if (normalized.systemInstruction) {
       args.push('--system-prompt', normalized.systemInstruction);
     }
-    args.push(normalized.prompt);
-    return { command: config.providerBinaries.claude, args };
+    return { command: config.providerBinaries.claude, args, stdin: normalized.prompt };
   }
 
   if (modelEntry.provider === 'codex') {
@@ -79,11 +78,12 @@ function normalizeProviderError(provider, output, code) {
 
 export function runCliOnce(normalized, modelEntry, config) {
   const { command, args, stdin } = providerCommand(normalized, modelEntry, config);
+  const hasStdin = stdin !== undefined;
 
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: normalized.runDir,
-      stdio: [stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+      stdio: [hasStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
         NO_COLOR: '1'
@@ -96,7 +96,7 @@ export function runCliOnce(normalized, modelEntry, config) {
       child.kill('SIGTERM');
       setTimeout(() => child.kill('SIGKILL'), 2_000).unref();
     }, config.runTimeoutMs);
-    if (stdin) {
+    if (hasStdin) {
       child.stdin.end(stdin);
     }
 
@@ -131,11 +131,12 @@ export function runCliOnce(normalized, modelEntry, config) {
 
 export function streamCli(normalized, modelEntry, config, onText) {
   const { command, args, stdin } = providerCommand(normalized, modelEntry, config);
+  const hasStdin = stdin !== undefined;
 
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: normalized.runDir,
-      stdio: [stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+      stdio: [hasStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
         NO_COLOR: '1'
@@ -148,7 +149,7 @@ export function streamCli(normalized, modelEntry, config, onText) {
       child.kill('SIGTERM');
       setTimeout(() => child.kill('SIGKILL'), 2_000).unref();
     }, config.runTimeoutMs);
-    if (stdin) {
+    if (hasStdin) {
       child.stdin.end(stdin);
     }
 

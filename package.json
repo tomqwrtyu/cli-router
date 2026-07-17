@@ -10,7 +10,8 @@
     "deploy": "bash scripts/deploy.sh",
     "deploy:edge": "bash scripts/deploy-edge-function.sh",
     "service:install": "bash scripts/install-systemd.sh",
-    "check": "node --check src/server.js && node --check src/auth.js && node --check src/attachments.js && node --check src/cli.js && node --check src/gemini.js && node --check src/config.js",
+    "test": "node test/cli.test.js",
+    "check": "node --check src/server.js && node --check src/auth.js && node --check src/attachments.js && node --check src/cli.js && node --check src/gemini.js && node --check src/config.js && npm test",
     "print-public-jwk": "node scripts/print-public-jwk.js"
   },
   "dependencies": {
