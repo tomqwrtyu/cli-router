@@ -63,6 +63,7 @@ export function providerCommand(normalized, modelEntry, config, options = {}) {
           '</conversation>'
         ].join('\n')
       : normalized.prompt;
+    if (options.stream) args.push('--json');
     args.push(
       '-c',
       'developer_instructions="Follow the application_instructions block from stdin, then answer the conversation. Return only the answer."'
@@ -114,6 +115,22 @@ function normalizeProviderError(provider, output, code) {
     reason: 'provider_cli_failed',
     provider,
     stderr: output.slice(-2000)
+  });
+}
+
+function emptyProviderError(provider, diagnostic = '') {
+  if (isContextLimitOutput(diagnostic) || isQuotaOutput(diagnostic)) {
+    return normalizeProviderError(provider, diagnostic, 0);
+  }
+  const safeDiagnostic = diagnostic
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [REDACTED]')
+    .slice(-2000);
+  if (safeDiagnostic) {
+    console.error(`Provider CLI completed without output provider=${provider} stderr=${JSON.stringify(safeDiagnostic)}`);
+  }
+  return new HttpError(502, 'UNAVAILABLE', 'Provider CLI completed without a response', {
+    reason: 'provider_empty_output',
+    provider
   });
 }
 
@@ -174,7 +191,7 @@ export function runCliOnce(normalized, modelEntry, config) {
         return;
       }
       if (!text.trim() && err.trim()) {
-        reject(normalizeProviderError(modelEntry.provider, err.trim(), code));
+        reject(emptyProviderError(modelEntry.provider, err.trim()));
         return;
       }
       resolve(text.trim());
@@ -209,6 +226,10 @@ export function streamCli(normalized, modelEntry, config, onText) {
     let claudeLineBuffer = '';
     let claudeStreamError = '';
     const claudeDecoder = new StringDecoder('utf8');
+    let codexLineBuffer = '';
+    let codexStreamError = '';
+    let codexSawAgentMessage = false;
+    const codexDecoder = new StringDecoder('utf8');
     const handleClaudeLine = (line) => {
       if (!line.trim()) return;
       let event;
@@ -225,6 +246,22 @@ export function streamCli(normalized, modelEntry, config, onText) {
         claudeStreamError = event.error?.message || event.result || JSON.stringify(event);
       }
     };
+    const handleCodexLine = (line) => {
+      if (!line.trim()) return;
+      let event;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        return;
+      }
+      if (event.type === 'item.completed' && event.item?.type === 'agent_message' && event.item.text) {
+        codexSawAgentMessage = true;
+        onText(event.item.text);
+      }
+      if (event.type === 'error' || event.type === 'turn.failed') {
+        codexStreamError = event.error?.message || event.message || JSON.stringify(event);
+      }
+    };
 
     child.stdout.on('data', (chunk) => {
       stdout.push(chunk);
@@ -233,6 +270,13 @@ export function streamCli(normalized, modelEntry, config, onText) {
         const lines = claudeLineBuffer.split('\n');
         claudeLineBuffer = lines.pop() || '';
         for (const line of lines) handleClaudeLine(line);
+        return;
+      }
+      if (modelEntry.provider === 'codex') {
+        codexLineBuffer += codexDecoder.write(chunk);
+        const lines = codexLineBuffer.split('\n');
+        codexLineBuffer = lines.pop() || '';
+        for (const line of lines) handleCodexLine(line);
         return;
       }
       const text = Buffer.concat(stdout).toString('utf8');
@@ -260,6 +304,10 @@ export function streamCli(normalized, modelEntry, config, onText) {
         claudeLineBuffer += claudeDecoder.end();
         if (claudeLineBuffer) handleClaudeLine(claudeLineBuffer);
       }
+      if (modelEntry.provider === 'codex') {
+        codexLineBuffer += codexDecoder.end();
+        if (codexLineBuffer) handleCodexLine(codexLineBuffer);
+      }
       if (signal) {
         reject(new HttpError(504, 'DEADLINE_EXCEEDED', 'Provider CLI timed out', {
           reason: 'provider_timeout',
@@ -277,8 +325,16 @@ export function streamCli(normalized, modelEntry, config, onText) {
         reject(normalizeProviderError(modelEntry.provider, claudeStreamError, code));
         return;
       }
+      if (codexStreamError) {
+        reject(normalizeProviderError(modelEntry.provider, codexStreamError, code));
+        return;
+      }
+      if (modelEntry.provider === 'codex' && !codexSawAgentMessage) {
+        reject(emptyProviderError(modelEntry.provider, `${err}\n${text}`.trim()));
+        return;
+      }
       if (!text.trim() && err.trim()) {
-        reject(normalizeProviderError(modelEntry.provider, err.trim(), code));
+        reject(emptyProviderError(modelEntry.provider, err.trim()));
         return;
       }
       resolve();

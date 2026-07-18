@@ -116,6 +116,57 @@ test('Claude runner can spawn with a 200 KiB prompt', async () => {
   }
 });
 
+test('Codex streaming uses JSON events and forwards only agent messages', async () => {
+  const runDir = await mkdtemp(path.join(os.tmpdir(), 'cli-router-test-'));
+  const fakeCodex = path.join(runDir, 'fake-codex');
+
+  try {
+    await writeFile(
+      fakeCodex,
+      [
+        '#!/bin/sh',
+        'cat >/dev/null',
+        `printf '%s\\n' '{"type":"thread.started","thread_id":"test"}'`,
+        `printf '%s\\n' '{"type":"item.completed","item":{"type":"reasoning","text":"hidden"}}'`,
+        `printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"CODEX_EVENT_OK"}}'`,
+        `printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'`
+      ].join('\n')
+    );
+    await chmod(fakeCodex, 0o700);
+    const chunks = [];
+    const modelEntry = {
+      provider: 'codex',
+      cliModel: 'gpt-test',
+      reasoningEffort: 'medium',
+      contextWindow: 1_050_000,
+      autoCompactTokenLimit: 800_000
+    };
+
+    await streamCli(
+      {
+        prompt: 'prompt',
+        systemInstruction: '',
+        imagePaths: [],
+        runDir
+      },
+      modelEntry,
+      {
+        providerBinaries: { codex: fakeCodex },
+        runTimeoutMs: 5_000
+      },
+      (text) => chunks.push(text)
+    );
+
+    assert.equal(chunks.join(''), 'CODEX_EVENT_OK');
+    const command = providerCommand({ prompt: '', imagePaths: [], runDir }, modelEntry, {
+      providerBinaries: { codex: 'codex' }
+    }, { stream: true });
+    assert.equal(command.args.includes('--json'), true);
+  } finally {
+    await rm(runDir, { recursive: true, force: true });
+  }
+});
+
 test('Claude keeps a 200 KiB system instruction out of argv', async () => {
   const runDir = await mkdtemp(path.join(os.tmpdir(), 'cli-router-test-'));
   const fakeClaude = path.join(runDir, 'fake-claude');
