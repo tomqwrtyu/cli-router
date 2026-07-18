@@ -5,7 +5,7 @@ import { loadConfig, loadModelRegistry } from './config.js';
 import { createJwtVerifier } from './auth.js';
 import { buildCallbackEvent, callbackContextFromJwt, createCallbackClient } from './callback.js';
 import { createCorsPolicy } from './cors.js';
-import { estimateUsageMetadata, geminiDoneChunk, geminiTextChunk, geminiTextResponse, normalizeGeminiRequest } from './gemini.js';
+import { assertPromptWithinModelLimits, estimateUsageMetadata, geminiDoneChunk, geminiTextChunk, geminiTextResponse, normalizeGeminiRequest } from './gemini.js';
 import { geminiError } from './errors.js';
 import { readRequestBody, sendJson, sendSseHeaders, writeSseData } from './http.js';
 import { HttpError } from './errors.js';
@@ -95,15 +95,27 @@ async function handleGenerate({
     limiter.enter();
     limiterEntered = true;
     normalized = await normalizeGeminiRequest(parseJson(rawBody), config, modelEntry);
+    assertPromptWithinModelLimits(normalized, modelEntry, config);
+    const runConfig = callbackContext
+      ? { ...config, runTimeoutMs: config.memoryRunTimeoutMs }
+      : config;
     if (stream) {
       sendSseHeaders(res, responseHeaders);
       let accumulatedText = '';
-      await streamCli(normalized, modelEntry, config, (text) => {
-        if (text) {
-          accumulatedText += text;
-          writeSseData(res, geminiTextChunk(text));
-        }
-      });
+      const keepAlive = setInterval(() => {
+        if (!res.writableEnded && !res.destroyed) res.write(': keep-alive\n\n');
+      }, 15_000);
+      keepAlive.unref();
+      try {
+        await streamCli(normalized, modelEntry, runConfig, (text) => {
+          if (text) {
+            accumulatedText += text;
+            writeSseData(res, geminiTextChunk(text));
+          }
+        });
+      } finally {
+        clearInterval(keepAlive);
+      }
       if (!accumulatedText.trim()) {
         throw new HttpError(502, 'UNAVAILABLE', 'Provider returned an empty response', {
           reason: 'provider_empty_output',
@@ -123,7 +135,7 @@ async function handleGenerate({
       writeSseData(res, geminiDoneChunk(usageMetadata));
       res.end();
     } else {
-      const text = await runCliOnce(normalized, modelEntry, config);
+      const text = await runCliOnce(normalized, modelEntry, runConfig);
       if (!text.trim()) {
         throw new HttpError(502, 'UNAVAILABLE', 'Provider returned an empty response', {
           reason: 'provider_empty_output',
@@ -187,7 +199,11 @@ async function handleModels({ req, res, url, config, registry, verifyJwt, respon
       provider: entry.provider,
       supportsImages: Boolean(entry.supportsImages),
       access: entry.access,
-      billing: entry.billing || null
+      billing: entry.billing || null,
+      contextWindow: entry.contextWindow || null,
+      inputCharLimit: entry.inputCharLimit || null,
+      inputTokenLimit: entry.inputTokenLimit || null,
+      outputTokenLimit: entry.outputTokenLimit || null
     }));
   sendJson(res, 200, { models }, responseHeaders);
   return true;

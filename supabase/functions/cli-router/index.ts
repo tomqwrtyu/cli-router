@@ -30,6 +30,10 @@ type RouterModel = {
   supportedGenerationMethods?: string[]
   provider?: string
   supportsImages?: boolean
+  contextWindow?: number
+  inputCharLimit?: number
+  inputTokenLimit?: number
+  outputTokenLimit?: number
   access?: {
     visibility?: string
   }

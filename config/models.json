@@ -2,6 +2,9 @@
   "claude-sonnet-latest": {
     "provider": "claude",
     "cliModel": "sonnet",
+    "contextWindow": 1000000,
+    "inputCharLimit": 524288,
+    "inputTokenLimit": 786432,
     "enabled": true,
     "supportsImages": false,
     "access": {
@@ -18,6 +21,9 @@
   "claude-opus-latest": {
     "provider": "claude",
     "cliModel": "opus",
+    "contextWindow": 1000000,
+    "inputCharLimit": 524288,
+    "inputTokenLimit": 786432,
     "enabled": true,
     "supportsImages": false,
     "access": {
@@ -31,26 +37,15 @@
       "estimatedUsage": true
     }
   },
-  "claude-fable-latest": {
-    "provider": "claude",
-    "cliModel": "fable",
-    "enabled": true,
-    "supportsImages": false,
-    "access": {
-      "visibility": "admin"
-    },
-    "billing": {
-      "unit": "credits_per_1m_tokens",
-      "input": 10.0,
-      "output": 50.0,
-      "costMultiplier": 2.0,
-      "estimatedUsage": true
-    }
-  },
   "gpt-5.6-sol": {
     "provider": "codex",
     "cliModel": "gpt-5.6-sol",
     "reasoningEffort": "medium",
+    "contextWindow": 1050000,
+    "inputCharLimit": 524288,
+    "inputTokenLimit": 786432,
+    "outputTokenLimit": 128000,
+    "autoCompactTokenLimit": 800000,
     "enabled": true,
     "supportsImages": true,
     "access": {
@@ -68,6 +63,11 @@
     "provider": "codex",
     "cliModel": "gpt-5.6-terra",
     "reasoningEffort": "medium",
+    "contextWindow": 1050000,
+    "inputCharLimit": 524288,
+    "inputTokenLimit": 786432,
+    "outputTokenLimit": 128000,
+    "autoCompactTokenLimit": 800000,
     "enabled": true,
     "supportsImages": true,
     "access": {
@@ -85,6 +85,11 @@
     "provider": "codex",
     "cliModel": "gpt-5.6-luna",
     "reasoningEffort": "medium",
+    "contextWindow": 1050000,
+    "inputCharLimit": 524288,
+    "inputTokenLimit": 786432,
+    "outputTokenLimit": 128000,
+    "autoCompactTokenLimit": 800000,
     "enabled": true,
     "supportsImages": true,
     "access": {

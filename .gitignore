@@ -8,3 +8,5 @@ __pycache__/
 *.pyc
 secrets/
 supabase/.temp/
+test_input.txt
+.test_input.txt.swp

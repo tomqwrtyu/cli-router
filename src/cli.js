@@ -1,12 +1,15 @@
 import { spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import { HttpError } from './errors.js';
 
-export function providerCommand(normalized, modelEntry, config) {
+export function providerCommand(normalized, modelEntry, config, options = {}) {
   if (modelEntry.provider === 'claude') {
+    const outputFormat = options.stream ? 'stream-json' : 'text';
     const args = [
       '-p',
       '--output-format',
-      'text',
+      outputFormat,
+      ...(options.stream ? ['--include-partial-messages', '--verbose'] : []),
       '--safe-mode',
       '--no-session-persistence',
       '--disable-slash-commands',
@@ -43,7 +46,11 @@ export function providerCommand(normalized, modelEntry, config) {
       '--model',
       modelEntry.cliModel,
       '-c',
-      `model_reasoning_effort=${JSON.stringify(modelEntry.reasoningEffort)}`
+      `model_reasoning_effort=${JSON.stringify(modelEntry.reasoningEffort)}`,
+      '-c',
+      `model_context_window=${modelEntry.contextWindow}`,
+      '-c',
+      `model_auto_compact_token_limit=${modelEntry.autoCompactTokenLimit}`
     ];
     const stdin = normalized.systemInstruction
       ? [
@@ -80,7 +87,23 @@ function isQuotaOutput(output) {
   );
 }
 
+function isContextLimitOutput(output) {
+  const lower = output.toLowerCase();
+  return (
+    lower.includes('context window') ||
+    lower.includes('input_too_large') ||
+    lower.includes('input exceeds the maximum length') ||
+    lower.includes('prompt is too long')
+  );
+}
+
 function normalizeProviderError(provider, output, code) {
+  if (isContextLimitOutput(output)) {
+    return new HttpError(413, 'INVALID_ARGUMENT', 'Input exceeds the provider context limit', {
+      reason: 'context_length_exceeded',
+      provider
+    });
+  }
   if (isQuotaOutput(output)) {
     return new HttpError(429, 'RESOURCE_EXHAUSTED', 'Provider quota exceeded or temporarily rate limited', {
       reason: 'provider_quota_exceeded',
@@ -120,6 +143,14 @@ export function runCliOnce(normalized, modelEntry, config) {
 
     child.stdout.on('data', (chunk) => stdout.push(chunk));
     child.stderr.on('data', (chunk) => stderr.push(chunk));
+    child.stdin?.on('error', (error) => {
+      if (error.code !== 'EPIPE') {
+        reject(new HttpError(502, 'UNAVAILABLE', `Failed to write provider input: ${error.message}`, {
+          reason: 'provider_cli_stdin_failed',
+          provider: modelEntry.provider
+        }));
+      }
+    });
     child.on('error', (error) => {
       clearTimeout(timeout);
       reject(new HttpError(502, 'UNAVAILABLE', `Failed to start provider CLI: ${error.message}`, {
@@ -142,13 +173,17 @@ export function runCliOnce(normalized, modelEntry, config) {
         reject(normalizeProviderError(modelEntry.provider, `${err}\n${text}`.trim(), code));
         return;
       }
+      if (!text.trim() && err.trim()) {
+        reject(normalizeProviderError(modelEntry.provider, err.trim(), code));
+        return;
+      }
       resolve(text.trim());
     });
   });
 }
 
 export function streamCli(normalized, modelEntry, config, onText) {
-  const { command, args, stdin } = providerCommand(normalized, modelEntry, config);
+  const { command, args, stdin } = providerCommand(normalized, modelEntry, config, { stream: true });
   const hasStdin = stdin !== undefined;
 
   return new Promise((resolve, reject) => {
@@ -171,14 +206,47 @@ export function streamCli(normalized, modelEntry, config, onText) {
       child.stdin.end(stdin);
     }
 
+    let claudeLineBuffer = '';
+    let claudeStreamError = '';
+    const claudeDecoder = new StringDecoder('utf8');
+    const handleClaudeLine = (line) => {
+      if (!line.trim()) return;
+      let event;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        return;
+      }
+      const delta = event.type === 'stream_event' ? event.event?.delta : null;
+      if (event.event?.type === 'content_block_delta' && delta?.type === 'text_delta' && delta.text) {
+        onText(delta.text);
+      }
+      if (event.type === 'error' || (event.type === 'result' && event.is_error)) {
+        claudeStreamError = event.error?.message || event.result || JSON.stringify(event);
+      }
+    };
+
     child.stdout.on('data', (chunk) => {
       stdout.push(chunk);
-      const text = Buffer.concat(stdout).toString('utf8');
-      if (!isQuotaOutput(text)) {
-        onText(chunk.toString('utf8'));
+      if (modelEntry.provider === 'claude') {
+        claudeLineBuffer += claudeDecoder.write(chunk);
+        const lines = claudeLineBuffer.split('\n');
+        claudeLineBuffer = lines.pop() || '';
+        for (const line of lines) handleClaudeLine(line);
+        return;
       }
+      const text = Buffer.concat(stdout).toString('utf8');
+      if (!isQuotaOutput(text)) onText(chunk.toString('utf8'));
     });
     child.stderr.on('data', (chunk) => stderr.push(chunk));
+    child.stdin?.on('error', (error) => {
+      if (error.code !== 'EPIPE') {
+        reject(new HttpError(502, 'UNAVAILABLE', `Failed to write provider input: ${error.message}`, {
+          reason: 'provider_cli_stdin_failed',
+          provider: modelEntry.provider
+        }));
+      }
+    });
     child.on('error', (error) => {
       clearTimeout(timeout);
       reject(new HttpError(502, 'UNAVAILABLE', `Failed to start provider CLI: ${error.message}`, {
@@ -188,6 +256,10 @@ export function streamCli(normalized, modelEntry, config, onText) {
     });
     child.on('close', (code, signal) => {
       clearTimeout(timeout);
+      if (modelEntry.provider === 'claude') {
+        claudeLineBuffer += claudeDecoder.end();
+        if (claudeLineBuffer) handleClaudeLine(claudeLineBuffer);
+      }
       if (signal) {
         reject(new HttpError(504, 'DEADLINE_EXCEEDED', 'Provider CLI timed out', {
           reason: 'provider_timeout',
@@ -199,6 +271,14 @@ export function streamCli(normalized, modelEntry, config, onText) {
       const text = Buffer.concat(stdout).toString('utf8');
       if (code !== 0) {
         reject(normalizeProviderError(modelEntry.provider, `${err}\n${text}`.trim(), code));
+        return;
+      }
+      if (claudeStreamError) {
+        reject(normalizeProviderError(modelEntry.provider, claudeStreamError, code));
+        return;
+      }
+      if (!text.trim() && err.trim()) {
+        reject(normalizeProviderError(modelEntry.provider, err.trim(), code));
         return;
       }
       resolve();

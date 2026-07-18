@@ -167,6 +167,13 @@ Models are public IDs in `config/models.json`. The router never passes arbitrary
 }
 ```
 
+Model entries publish context metadata for clients and server-side preflight.
+All exposed Claude and Codex models share a 524,288-character hard input limit
+and a 786,432-token estimated input limit. `GET /v1beta/models` exposes these
+values as `contextWindow`, `inputCharLimit`, `inputTokenLimit`, and (when known)
+`outputTokenLimit`. GPT-5.6 CLI runs explicitly opt into the 1,050,000-token
+model context instead of relying on the smaller Codex catalog default.
+
 Provider-wide switches live in `.env`:
 
 ```env

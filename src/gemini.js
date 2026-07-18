@@ -22,6 +22,36 @@ function collectTextParts(content) {
     .join('\n');
 }
 
+export function estimateTextTokens(text) {
+  if (!text) return 0;
+  return Math.ceil(Buffer.byteLength(text, 'utf8') / 2);
+}
+
+export function assertPromptWithinModelLimits(normalized, modelEntry, config) {
+  const inputText = [normalized.systemInstruction, normalized.prompt]
+    .filter(Boolean)
+    .join('\n');
+  const inputChars = inputText.length;
+  const imageTokens = (normalized.images || [])
+    .map((image) => estimateImagePromptTokens(image, config).tokenCount)
+    .reduce((total, tokens) => total + tokens, 0);
+  const estimatedInputTokens = estimateTextTokens(inputText) + imageTokens;
+
+  if (inputChars > modelEntry.inputCharLimit || estimatedInputTokens > modelEntry.inputTokenLimit) {
+    throw new HttpError(413, 'INVALID_ARGUMENT', 'Input exceeds the model context limit', {
+      reason: 'context_length_exceeded',
+      inputChars,
+      inputCharLimit: modelEntry.inputCharLimit,
+      estimatedInputTokens,
+      inputTokenLimit: modelEntry.inputTokenLimit,
+      model: modelEntry.cliModel
+    });
+  }
+
+  normalized.inputEstimate = { inputChars, estimatedInputTokens, imageTokens };
+  return normalized.inputEstimate;
+}
+
 function roleLabel(role) {
   if (role === 'model') return 'Assistant';
   return 'User';
@@ -73,18 +103,18 @@ export function geminiDoneChunk(usageMetadata = null) {
 export function estimateUsageMetadata(normalized, outputText, config) {
   const images = Array.isArray(normalized.images) ? normalized.images : [];
   const imageCount = images.length;
-  const inputChars = [normalized.systemInstruction, normalized.prompt]
+  const inputText = [normalized.systemInstruction, normalized.prompt]
     .filter(Boolean)
-    .join('\n')
-    .length;
+    .join('\n');
   const imageTokenDetails = images.map((image) => estimateImagePromptTokens(image, config));
   const imageTokenCount = imageTokenDetails.reduce((total, image) => total + image.tokenCount, 0);
-  const promptTokenCount = Math.ceil(inputChars / 4) + imageTokenCount;
-  const candidatesTokenCount = Math.ceil((outputText || '').length / 4);
+  const promptTokenCount = estimateTextTokens(inputText) + imageTokenCount;
+  const candidatesTokenCount = estimateTextTokens(outputText || '');
   return {
     promptTokenCount,
     candidatesTokenCount,
     totalTokenCount: promptTokenCount + candidatesTokenCount,
+    inputCharacterCount: inputText.length,
     estimated: true,
     imageCount,
     imageTokenCount,
