@@ -21,6 +21,16 @@ You still need to set:
 - `ROUTER_URL`: public HTTPS base URL for this Node router, for example `https://router.example.com`
 - `ALLOWED_ORIGINS`: comma-separated frontend origins, for example `https://app.example.com`
 
+Optional per-project billing policy:
+
+- `ROUTER_BILLING_CAP_JSON`: caps, but never raises, Router billing returned by
+  this project. Example:
+  `{"unit":"credits_per_1m_tokens","input":2,"output":12,"costMultiplier":2,"referenceModel":"gemini-3.1-pro-preview"}`
+
+The capped metadata is used by Mirastral for model display, credit holds, and
+final settlement. It does not modify the Node router's global model catalog or
+the policy used by another Supabase project.
+
 The function also uses Supabase's built-in `SUPABASE_URL` and
 `SUPABASE_SERVICE_ROLE_KEY` secrets to read router model overrides from
 `profiles`.

@@ -4,6 +4,7 @@ set -euo pipefail
 FUNCTION_NAME="${FUNCTION_NAME:-cli-router}"
 ROUTER_URL="${1:-${ROUTER_URL:-}}"
 ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-}"
+ROUTER_BILLING_CAP_JSON="${ROUTER_BILLING_CAP_JSON:-}"
 
 if [ -n "$ROUTER_URL" ]; then
   DO_NOT_TRACK=1 npx supabase secrets set ROUTER_URL="$ROUTER_URL"
@@ -14,6 +15,10 @@ fi
 
 if [ -n "$ALLOWED_ORIGINS" ]; then
   DO_NOT_TRACK=1 npx supabase secrets set ALLOWED_ORIGINS="$ALLOWED_ORIGINS"
+fi
+
+if [ -n "$ROUTER_BILLING_CAP_JSON" ]; then
+  DO_NOT_TRACK=1 npx supabase secrets set ROUTER_BILLING_CAP_JSON="$ROUTER_BILLING_CAP_JSON"
 fi
 
 DO_NOT_TRACK=1 npx supabase functions deploy "$FUNCTION_NAME"

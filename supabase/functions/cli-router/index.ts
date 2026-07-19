@@ -1,5 +1,6 @@
 import { SignJWT, importJWK } from 'npm:jose@5.9.6'
 import { createClient } from 'npm:@supabase/supabase-js'
+import { applyBillingCap, parseBillingCap } from './billing-policy.ts'
 
 const ROUTER_URL = Deno.env.get('ROUTER_URL')
 const ROUTER_JWT_PRIVATE_JWK = Deno.env.get('ROUTER_JWT_PRIVATE_JWK')
@@ -9,6 +10,7 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
 const ROUTER_PROJECT_REF = Deno.env.get('ROUTER_PROJECT_REF') || new URL(SUPABASE_URL || 'https://invalid.local').hostname.split('.')[0]
 const ROUTER_CLIENT_ID = Deno.env.get('ROUTER_CLIENT_ID') || ROUTER_PROJECT_REF
+const ROUTER_BILLING_CAP = parseBillingCap(Deno.env.get('ROUTER_BILLING_CAP_JSON'))
 const ALLOWED_ORIGINS = (Deno.env.get('ALLOWED_ORIGINS') || '')
   .split(',')
   .map((origin) => origin.trim())
@@ -224,7 +226,11 @@ Deno.serve(async (req) => {
     }
     headers.set('content-type', 'application/json')
 
-    return new Response(JSON.stringify({ ...payload, models: filterModelsForUser(models, userPolicy) }), {
+    const visibleModels = filterModelsForUser(models, userPolicy).map((model) => ({
+      ...model,
+      billing: applyBillingCap(model.billing, ROUTER_BILLING_CAP)
+    }))
+    return new Response(JSON.stringify({ ...payload, models: visibleModels }), {
       status: 200,
       headers
     })
