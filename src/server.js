@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, loadModelRegistry } from './config.js';
-import { createJwtVerifier } from './auth.js';
+import { clientAllowsModel, createJwtVerifier } from './auth.js';
 import { buildCallbackEvent, callbackContextFromJwt, createCallbackClient } from './callback.js';
 import { createClaimClient } from './claim.js';
 import { createCorsPolicy } from './cors.js';
@@ -14,10 +14,12 @@ import { runCliOnce, streamCli } from './cli.js';
 import { JobManager } from './job-manager.js';
 import { createEncryptedOutbox } from './outbox.js';
 import { createStreamTokenService } from './stream-token.js';
+import { ProviderHealthCache } from './provider-health.js';
+import { createAlertSink } from './alerts.js';
 
 const routePattern = /^\/v1beta\/models\/([^/]+):(generateContent|streamGenerateContent)$/;
 
-function assertProviderEnabled(modelId, modelEntry, config) {
+function assertProviderEnabled(modelId, modelEntry, config, providerHealth = null, claims = null) {
   if (!modelEntry || modelEntry.enabled === false) {
     throw new HttpError(404, 'NOT_FOUND', `Model not found: ${modelId}`, {
       reason: 'model_not_found'
@@ -29,6 +31,12 @@ function assertProviderEnabled(modelId, modelEntry, config) {
       provider: modelEntry.provider
     });
   }
+  if (!clientAllowsModel(claims, modelId)) {
+    throw new HttpError(403, 'PERMISSION_DENIED', 'Model is not allowed for this client', {
+      reason: 'client_model_denied'
+    });
+  }
+  providerHealth?.assertAvailable(modelEntry.provider);
 }
 
 function parseJson(buffer) {
@@ -75,7 +83,8 @@ async function handleGenerate({
   verifyJwt,
   limiter,
   callbackClient,
-  responseHeaders
+  responseHeaders,
+  providerHealth
 }) {
   const match = routePattern.exec(url.pathname);
   if (!match) return false;
@@ -102,7 +111,7 @@ async function handleGenerate({
   let callbackEvent = null;
   let caughtError = null;
   try {
-    assertProviderEnabled(modelId, modelEntry, config);
+    assertProviderEnabled(modelId, modelEntry, config, providerHealth, jwtPayload);
     limiter.enter();
     limiterEntered = true;
     normalized = await normalizeGeminiRequest(parseJson(rawBody), config, modelEntry);
@@ -167,6 +176,7 @@ async function handleGenerate({
     }
   } catch (error) {
     caughtError = error;
+    providerHealth?.markQuotaError(modelEntry?.provider, error);
     console.error(
       `Generation failed model=${modelId} action=${action} duration_ms=${Date.now() - startedAt} reason=${error?.details?.reason || error?.name || 'unknown'}`
     );
@@ -200,9 +210,11 @@ async function handleGenerate({
   return true;
 }
 
-export function buildModelCatalog(config, registry) {
+export function buildModelCatalog(config, registry, providerHealth = null, claims = null) {
   return (config.backgroundJobs.enabled ? Object.entries(registry) : [])
-    .filter(([, entry]) => entry.enabled !== false && config.providers[entry.provider])
+    .filter(([modelId, entry]) => entry.enabled !== false && config.providers[entry.provider] &&
+      clientAllowsModel(claims, modelId) &&
+      (providerHealth?.status(entry.provider).available ?? true))
     .map(([name, entry]) => ({
       name: `models/${name}`,
       displayName: name,
@@ -222,11 +234,11 @@ export function buildModelCatalog(config, registry) {
     }));
 }
 
-async function handleModels({ req, res, url, config, registry, verifyJwt, responseHeaders }) {
+async function handleModels({ req, res, url, config, registry, verifyJwt, responseHeaders, providerHealth }) {
   if (req.method !== 'GET' || url.pathname !== '/v1beta/models') return false;
   const rawBody = Buffer.alloc(0);
-  await verifyJwt(req, url, rawBody);
-  const models = buildModelCatalog(config, registry);
+  const claims = await verifyJwt(req, url, rawBody);
+  const models = buildModelCatalog(config, registry, providerHealth, claims);
   sendJson(res, 200, { models }, responseHeaders);
   return true;
 }
@@ -242,7 +254,13 @@ async function handleJobs({ req, res, url, config, verifyJwt, jobManager, respon
   if (req.method === 'POST' && url.pathname === '/v1/jobs') {
     const rawBody = await readRequestBody(req, 64 * 1024);
     const claims = await verifyJwt(req, url, rawBody);
-    const result = await jobManager.launch(parseJson(rawBody), claims);
+    const envelope = parseJson(rawBody);
+    if (!clientAllowsModel(claims, envelope.model)) {
+      throw new HttpError(403, 'PERMISSION_DENIED', 'Model is not allowed for this client', {
+        reason: 'client_model_denied'
+      });
+    }
+    const result = await jobManager.launch(envelope, claims);
     sendJson(res, 202, result, responseHeaders);
     return true;
   }
@@ -305,6 +323,16 @@ export async function main() {
   const config = loadConfig();
   await fs.mkdir(config.tmpDir, { recursive: true });
   const registry = await loadModelRegistry(config);
+  const alerts = createAlertSink(config.alerts);
+  const providerHealth = new ProviderHealthCache(config.providerHealth, {
+    onUnavailable: ({ provider, disabledUntil }) => {
+      console.error(`Provider quota unavailable provider=${provider} disabled_until=${new Date(disabledUntil).toISOString()}`);
+      void alerts.emit('provider_quota_unavailable', {
+        provider,
+        disabledUntil: new Date(disabledUntil).toISOString()
+      });
+    }
+  });
   const verifyJwt = await createJwtVerifier(config);
   const limiter = new RunLimiter(config.maxConcurrentRuns);
   const corsPolicy = createCorsPolicy(config.cors);
@@ -323,7 +351,9 @@ export async function main() {
       claimClient,
       streamTokens,
       callbackClient,
-      outbox
+      outbox,
+      providerHealth,
+      alerts
     });
   }
 
@@ -341,9 +371,10 @@ export async function main() {
         config,
         verifyJwt,
         jobManager,
+        providerHealth,
         responseHeaders
       })) return;
-      if (await handleModels({ req, res, url, config, registry, verifyJwt, responseHeaders })) return;
+      if (await handleModels({ req, res, url, config, registry, verifyJwt, responseHeaders, providerHealth })) return;
       if (req.method === 'POST' && await handleGenerate({
         req,
         res,
@@ -353,6 +384,7 @@ export async function main() {
         verifyJwt,
         limiter,
         callbackClient,
+        providerHealth,
         responseHeaders
       })) return;
       throw new HttpError(404, 'NOT_FOUND', 'Route not found');

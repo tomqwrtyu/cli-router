@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
 import { HttpError } from './errors.js';
+import { quotaErrorDetails } from './provider-health.js';
 
 export function providerCommand(normalized, modelEntry, config, options = {}) {
   if (modelEntry.provider === 'claude') {
@@ -100,7 +101,7 @@ function isContextLimitOutput(output) {
   );
 }
 
-function normalizeProviderError(provider, output, code) {
+function normalizeProviderError(provider, output, code, config = {}) {
   if (isContextLimitOutput(output)) {
     return new HttpError(413, 'INVALID_ARGUMENT', 'Input exceeds the provider context limit', {
       reason: 'context_length_exceeded',
@@ -109,8 +110,7 @@ function normalizeProviderError(provider, output, code) {
   }
   if (isQuotaOutput(output)) {
     return new HttpError(429, 'RESOURCE_EXHAUSTED', 'Provider quota exceeded or temporarily rate limited', {
-      reason: 'provider_quota_exceeded',
-      provider
+      ...quotaErrorDetails(provider, output, config.providerHealth)
     });
   }
   return new HttpError(502, 'UNAVAILABLE', `Provider CLI failed with exit code ${code}`, {
@@ -121,9 +121,9 @@ function normalizeProviderError(provider, output, code) {
   });
 }
 
-function emptyProviderError(provider, diagnostic = '') {
+function emptyProviderError(provider, diagnostic = '', config = {}) {
   if (isContextLimitOutput(diagnostic) || isQuotaOutput(diagnostic)) {
-    return normalizeProviderError(provider, diagnostic, 0);
+    return normalizeProviderError(provider, diagnostic, 0, config);
   }
   if (diagnostic) {
     const diagnosticHash = crypto.createHash('sha256').update(diagnostic).digest('hex');
@@ -201,11 +201,11 @@ export function runCliOnce(normalized, modelEntry, config) {
       const text = Buffer.concat(stdout).toString('utf8');
       const err = Buffer.concat(stderr).toString('utf8');
       if (code !== 0) {
-        reject(normalizeProviderError(modelEntry.provider, `${err}\n${text}`.trim(), code));
+        reject(normalizeProviderError(modelEntry.provider, `${err}\n${text}`.trim(), code, config));
         return;
       }
       if (!text.trim() && err.trim()) {
-        reject(emptyProviderError(modelEntry.provider, err.trim()));
+        reject(emptyProviderError(modelEntry.provider, err.trim(), config));
         return;
       }
       resolve(text.trim());
@@ -390,23 +390,23 @@ export function streamCli(normalized, modelEntry, config, onText, options = {}) 
       const err = Buffer.concat(stderr).toString('utf8');
       const text = Buffer.concat(stdout).toString('utf8');
       if (code !== 0) {
-        reject(normalizeProviderError(modelEntry.provider, `${err}\n${text}`.trim(), code));
+        reject(normalizeProviderError(modelEntry.provider, `${err}\n${text}`.trim(), code, config));
         return;
       }
       if (claudeStreamError) {
-        reject(normalizeProviderError(modelEntry.provider, claudeStreamError, code));
+        reject(normalizeProviderError(modelEntry.provider, claudeStreamError, code, config));
         return;
       }
       if (codexStreamError) {
-        reject(normalizeProviderError(modelEntry.provider, codexStreamError, code));
+        reject(normalizeProviderError(modelEntry.provider, codexStreamError, code, config));
         return;
       }
       if (modelEntry.provider === 'codex' && !codexSawAgentMessage) {
-        reject(emptyProviderError(modelEntry.provider, `${err}\n${text}`.trim()));
+        reject(emptyProviderError(modelEntry.provider, `${err}\n${text}`.trim(), config));
         return;
       }
       if (!text.trim() && err.trim()) {
-        reject(emptyProviderError(modelEntry.provider, err.trim()));
+        reject(emptyProviderError(modelEntry.provider, err.trim(), config));
         return;
       }
       resolve({ usageMetadata: providerUsage });

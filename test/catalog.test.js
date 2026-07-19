@@ -21,3 +21,19 @@ test('model catalog fails closed while background jobs are disabled', () => {
   config.backgroundJobs.enabled = true;
   assert.equal(buildModelCatalog(config, registry)[0].name, 'models/gpt-test');
 });
+
+test('model catalog intersects enabled models with trusted-client policy', () => {
+  const config = {
+    providers: { codex: true },
+    codexLiveSearch: true,
+    backgroundJobs: { enabled: true }
+  };
+  const denied = buildModelCatalog(config, registry, null, {
+    routerClient: { allowedModels: ['another-model'] }
+  });
+  assert.deepEqual(denied, []);
+  const allowed = buildModelCatalog(config, registry, null, {
+    routerClient: { allowedModels: ['gpt-test'] }
+  });
+  assert.equal(allowed.length, 1);
+});

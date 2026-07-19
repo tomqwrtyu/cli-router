@@ -2,30 +2,33 @@
 
 ## Multi-project cli-router access
 
-- Support multiple trusted Supabase Edge Function clients instead of a single `ROUTER_JWT_PUBLIC_JWK`.
-- Store per-client issuer, audience, public JWK, allowed origins, allowed models, and quota/rate-limit policy.
-- Include `client_id` and `project_ref` claims in router JWTs signed by each project.
-- Verify `issuer + audience + kid` against a trusted-client registry before checking `method`, `path`, `body_sha256`, `jti`, and `exp`.
-- Return `/v1beta/models` as the intersection of router-enabled models, client-level policy, and user-level ACL.
-- Keep one private signing key per Supabase project so one project can be revoked without rotating every client.
+- [x] Accept multiple trusted Supabase clients through `ROUTER_TRUSTED_CLIENTS_JSON`.
+- [x] Store per-client issuer, audience, public JWK, allowed origins/models, and launch policy.
+- [x] Sign and verify `client_id`, `project_ref`, and protected `kid` claims.
+- [x] Resolve `issuer + audience + kid` before signature and request-binding checks.
+- [x] Intersect router availability, client model policy, and Supabase user ACL for `/models`.
+- [x] Keep private signing keys project-local; the Router registry stores only public JWKs.
+- [ ] Add a claim/callback/outbox runtime per client before enabling background jobs for a second project. Authentication and model discovery support multiple clients now, but background endpoints remain bound to the current `ROUTER_PROJECT_ID`.
 
 ## Provider quota health cache
 
-- Track provider quota/session-limit failures in the Node router when a CLI exits with `provider_quota_exceeded`.
-- Temporarily hide models for an unavailable provider from `/v1beta/models` until a `disabledUntil` timestamp passes.
-- Parse reset times from provider messages when available, for example Claude's `resets 4:20pm (UTC)` session-limit text.
-- Fall back to a conservative fixed cooldown when no reset time can be parsed.
-- Keep this as an availability optimization only; direct generation must still return 429 when the provider is quota-limited.
+- [x] Track provider quota/session-limit failures in the Node process.
+- [x] Hide unavailable providers from `/models` until `disabledUntil` passes.
+- [x] Parse relative, UTC clock, epoch, and dated reset messages.
+- [x] Fall back to a bounded 15-minute cooldown.
+- [x] Continue returning 429 for direct or background launches while unavailable.
 
 ## Production rollout gate
 
-- Deploy the migration and router-claim, router-callback, gemini-api, and transaction functions before enabling Router background jobs.
+- [x] Deploy the migration and router-claim, router-callback, attachment-maintenance, gemini-api, and transaction functions.
 - [x] Run the production E2E matrix for chat, reconnect, cancel, callback outage recovery, stale recovery, memory actions, private images, documents, and each feature action. The callback drill verified encrypted outbox persistence, automatic redelivery, idempotent settlement, and cleanup.
-- Alert on `outbox entries expired`, `outbox enqueue failed`, and stale-generation reconciliation events before enabling the kill switch.
-- Move the 12-shichen rectification summary calculation into Edge. History and chart ownership are canonical now, but the calculated summary is still browser-derived data.
-- Add automated tests for authenticated stream-token refresh and action-specific callback persistence.
+- [x] Emit structured alerts for outbox expiry/enqueue/flush failures and persist stale reconciliation events.
+- [x] Calculate the 12-shichen rectification summary from the canonical owned chart in Edge.
+- [x] Test authenticated stream-token refresh and action-specific callback persistence.
+- [x] Verify the production Supabase-user `/models` path through Edge and the trusted-client Router registry. The warm request completed in 1.9 seconds.
 
 ## Attachment migration
 
-- Copy existing `chat-images` objects to `chat-attachments`, verify object counts and references, then disable and remove the public bucket.
-- Add a scheduled orphan cleanup for unreferenced private uploads older than 24 hours.
+- [x] Copy and checksum every referenced legacy image, rewrite its DB reference, and make `chat-images` private after the reference count reaches zero.
+- [x] Run signed hourly cleanup for unreferenced private uploads older than 24 hours.
+- [ ] Confirm scheduled retirement removes the now-private `chat-images` bucket after its 1,770 orphan objects reach the 24-hour threshold. No application references remain.

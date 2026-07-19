@@ -49,6 +49,64 @@ function jsonEnv(name, fallback = null) {
 
 const MODEL_VISIBILITIES = new Set(['default', 'restricted', 'admin']);
 
+function normalizeTrustedClients(value) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw new Error('ROUTER_TRUSTED_CLIENTS_JSON must be a JSON array');
+  const identities = new Set();
+  const clientIds = new Set();
+  return value.map((client, index) => {
+    if (!client || typeof client !== 'object') {
+      throw new Error(`Trusted client at index ${index} must be an object`);
+    }
+    for (const field of ['clientId', 'projectRef', 'issuer', 'audience']) {
+      if (typeof client[field] !== 'string' || !client[field]) {
+        throw new Error(`Trusted client at index ${index} requires ${field}`);
+      }
+    }
+    if (!client.publicJwk || typeof client.publicJwk !== 'object' || !client.publicJwk.kid) {
+      throw new Error(`Trusted client ${client.clientId} requires a public JWK with kid`);
+    }
+    if (client.publicJwk.d) {
+      throw new Error(`Trusted client ${client.clientId} must not contain a private JWK`);
+    }
+    if ((client.alg || 'ES256') !== 'ES256') {
+      throw new Error(`Trusted client ${client.clientId} must use ES256`);
+    }
+    if (clientIds.has(client.clientId)) throw new Error(`Duplicate trusted client ID: ${client.clientId}`);
+    clientIds.add(client.clientId);
+    const identity = `${client.issuer}\n${client.audience}\n${client.publicJwk.kid}`;
+    if (identities.has(identity)) throw new Error(`Duplicate trusted client key identity: ${client.clientId}`);
+    identities.add(identity);
+    const allowedModels = Array.isArray(client.allowedModels)
+      ? client.allowedModels.filter((model) => typeof model === 'string' && model)
+      : ['*'];
+    if (allowedModels.length === 0) {
+      throw new Error(`Trusted client ${client.clientId} must allow at least one model or *`);
+    }
+    const allowedOrigins = Array.isArray(client.allowedOrigins)
+      ? client.allowedOrigins.filter((origin) => typeof origin === 'string' && origin)
+      : [];
+    return {
+      clientId: client.clientId,
+      projectRef: client.projectRef,
+      issuer: client.issuer,
+      audience: client.audience,
+      alg: client.alg || 'ES256',
+      publicJwk: client.publicJwk,
+      allowedModels,
+      allowedOrigins,
+      quota: {
+        launchesPerMinute: Number.isInteger(client.quota?.launchesPerMinute) && client.quota.launchesPerMinute > 0
+          ? client.quota.launchesPerMinute
+          : 6,
+        maxActivePerUser: Number.isInteger(client.quota?.maxActivePerUser) && client.quota.maxActivePerUser > 0
+          ? client.quota.maxActivePerUser
+          : 1
+      }
+    };
+  });
+}
+
 export function loadConfig() {
   const callbackUrl = process.env.ROUTER_CALLBACK_URL || '';
   const callbackSecret = process.env.ROUTER_CALLBACK_SECRET || '';
@@ -71,6 +129,15 @@ export function loadConfig() {
   const claimSecret = process.env.ROUTER_CLAIM_SECRET || '';
   const streamTokenSecret = process.env.ROUTER_STREAM_TOKEN_SECRET || '';
   const outboxEncryptionKey = process.env.ROUTER_OUTBOX_ENCRYPTION_KEY || '';
+  const trustedClients = normalizeTrustedClients(jsonEnv('ROUTER_TRUSTED_CLIENTS_JSON'));
+  const alertWebhookUrl = process.env.ROUTER_ALERT_WEBHOOK_URL || '';
+  const alertWebhookSecret = process.env.ROUTER_ALERT_WEBHOOK_SECRET || '';
+  if (alertWebhookUrl) {
+    const parsedAlertUrl = new URL(alertWebhookUrl);
+    if (parsedAlertUrl.protocol !== 'https:' && process.env.NODE_ENV === 'production') {
+      throw new Error('ROUTER_ALERT_WEBHOOK_URL must use HTTPS in production');
+    }
+  }
   if (backgroundJobsEnabled) {
     const missing = [
       ['ROUTER_PROJECT_ID', projectId],
@@ -97,6 +164,9 @@ export function loadConfig() {
     }
   }
 
+  const configuredOrigins = listEnv('CORS_ALLOWED_ORIGINS', []);
+  const trustedOrigins = trustedClients.flatMap((client) => client.allowedOrigins);
+
   return {
     env: process.env.NODE_ENV || 'development',
     host: process.env.HOST || '127.0.0.1',
@@ -110,9 +180,20 @@ export function loadConfig() {
       maxAgeSeconds: intEnv('ROUTER_JWT_MAX_AGE_SECONDS', 60),
       clockToleranceSeconds: intEnv('ROUTER_JWT_CLOCK_TOLERANCE_SECONDS', 5)
     },
+    trustedClients,
     providers: {
       claude: boolEnv('ENABLE_CLAUDE', true),
       codex: boolEnv('ENABLE_CODEX', true)
+    },
+    providerHealth: {
+      fallbackCooldownMs: positiveIntEnv('PROVIDER_QUOTA_FALLBACK_MS', 15 * 60_000),
+      maxCooldownMs: positiveIntEnv('PROVIDER_QUOTA_MAX_COOLDOWN_MS', 7 * 24 * 60 * 60_000)
+    },
+    alerts: {
+      webhookUrl: alertWebhookUrl,
+      webhookSecret: alertWebhookSecret,
+      timeoutMs: positiveIntEnv('ROUTER_ALERT_WEBHOOK_TIMEOUT_MS', 5_000),
+      minIntervalMs: positiveIntEnv('ROUTER_ALERT_MIN_INTERVAL_MS', 60_000)
     },
     codexLiveSearch: boolEnv('ENABLE_CODEX_LIVE_SEARCH', false),
     providerBinaries: {
@@ -127,7 +208,7 @@ export function loadConfig() {
     maxConcurrentRuns: intEnv('MAX_CONCURRENT_RUNS', 2),
     tmpDir: process.env.TMP_DIR || '/tmp/cli-router',
     cors: {
-      allowedOrigins: listEnv('CORS_ALLOWED_ORIGINS', []),
+      allowedOrigins: [...new Set([...configuredOrigins, ...trustedOrigins])],
       maxAgeSeconds: intEnv('CORS_MAX_AGE_SECONDS', 600)
     },
     callback: {

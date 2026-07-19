@@ -48,6 +48,19 @@ ROUTER_JWT_PRIVATE_JWK='{...}' npm run print-public-jwk
 
 Set that output as `ROUTER_JWT_PUBLIC_JWK`.
 
+For multiple Supabase projects, set `ROUTER_TRUSTED_CLIENTS_JSON` to an array
+of client records containing `clientId`, `projectRef`, `issuer`, `audience`, an
+ES256 public JWK with `kid`, exact browser origins, allowed model IDs, and the
+client launch policy. Router JWTs must then include matching `client_id` and
+`project_ref` claims. Private JWKs remain in each project's Edge secrets and
+must never be added to the Router registry.
+
+Convert the current single-project `.env` without exposing its private key:
+
+```bash
+npm run configure:trusted-client -- <supabase-project-ref>
+```
+
 ## Deployment
 
 Link Supabase and set router JWT secrets:

@@ -12,6 +12,10 @@ Already set by `scripts/supabase-setup.sh`:
 - `ROUTER_JWT_ISSUER`
 - `ROUTER_JWT_AUDIENCE`
 
+`ROUTER_CLIENT_ID` and `ROUTER_PROJECT_REF` are optional overrides for the
+multi-project registry. By default both are derived from the built-in
+`SUPABASE_URL` project reference.
+
 You still need to set:
 
 - `ROUTER_URL`: public HTTPS base URL for this Node router, for example `https://router.example.com`

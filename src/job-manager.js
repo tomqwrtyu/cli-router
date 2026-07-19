@@ -91,17 +91,20 @@ function fitWithinTokenLimit(existing, chunk, maxTokens) {
 }
 
 export class JobManager {
-  constructor({ config, registry, claimClient, streamTokens, callbackClient, outbox, now = Date.now }) {
+  constructor({ config, registry, claimClient, streamTokens, callbackClient, outbox, providerHealth = null, alerts = null, now = Date.now }) {
     this.config = config;
     this.registry = registry;
     this.claimClient = claimClient;
     this.streamTokens = streamTokens;
     this.callbackClient = callbackClient;
     this.outbox = outbox;
+    this.providerHealth = providerHealth;
+    this.alerts = alerts;
     this.now = now;
     this.jobs = new Map();
     this.activeByUser = new Map();
     this.cancelledAt = new Map();
+    this.clientLaunchEvents = new Map();
     this.usedStreamTokens = new Set();
     this.launchLimiter = new RollingLaunchLimiter({
       limit: config.backgroundJobs.launchesPerMinute,
@@ -110,6 +113,10 @@ export class JobManager {
     this.outboxTimer = setInterval(
       () => void this.flushOutbox().catch((error) => {
         console.error(`Router callback outbox flush failed error_class=${error?.name || 'Error'}`);
+        void this.alerts?.emit('callback_outbox_flush_failed', {
+          projectId: this.config.backgroundJobs.projectId,
+          errorClass: error?.name || 'Error'
+        });
       }),
       config.backgroundJobs.outbox.retryIntervalMs
     );
@@ -120,7 +127,10 @@ export class JobManager {
     validateEnvelope(envelope, claims, this.config.backgroundJobs.projectId);
     const existing = this.jobs.get(envelope.requestId);
     if (existing) {
-      if (existing.userId !== envelope.userId) {
+      if (
+        existing.userId !== envelope.userId ||
+        existing.clientId !== (claims.routerClient?.clientId || 'legacy')
+      ) {
         throw new HttpError(409, 'ALREADY_EXISTS', 'Request ID belongs to another user');
       }
       const streamToken = await this.streamTokens.issue({
@@ -141,8 +151,12 @@ export class JobManager {
         reason: 'model_unavailable'
       });
     }
+    this.providerHealth?.assertAvailable(modelEntry.provider);
     const active = this.activeByUser.get(envelope.userId) || 0;
-    if (active >= this.config.backgroundJobs.maxActivePerUser) {
+    const clientMaxActive = claims.routerClient?.quota?.maxActivePerUser ||
+      this.config.backgroundJobs.maxActivePerUser;
+    const maxActive = Math.min(this.config.backgroundJobs.maxActivePerUser, clientMaxActive);
+    if (active >= maxActive) {
       throw new HttpError(429, 'RESOURCE_EXHAUSTED', 'User already has an active generation', {
         reason: 'user_concurrency_exceeded',
         retryAfter: 3
@@ -156,6 +170,7 @@ export class JobManager {
         retryAfter: Math.ceil(cooldownRemaining / 1000)
       });
     }
+    this.consumeClientLaunch(claims, envelope.userId);
 
     const streamToken = await this.streamTokens.issue({
       requestId: envelope.requestId,
@@ -164,6 +179,7 @@ export class JobManager {
     });
     const job = {
       id: envelope.requestId,
+      clientId: claims.routerClient?.clientId || 'legacy',
       projectId: envelope.projectId,
       userId: envelope.userId,
       sessionId: envelope.sessionId || null,
@@ -188,6 +204,27 @@ export class JobManager {
     this.activeByUser.set(job.userId, active + 1);
     queueMicrotask(() => void this.run(job, modelEntry));
     return { accepted: true, duplicate: false, request: publicJob(job), streamToken };
+  }
+
+  consumeClientLaunch(claims, userId) {
+    const client = claims.routerClient;
+    if (!client) return;
+    const limit = Math.min(
+      this.config.backgroundJobs.launchesPerMinute,
+      client.quota?.launchesPerMinute || this.config.backgroundJobs.launchesPerMinute
+    );
+    const key = `${client.clientId}:${userId}`;
+    const cutoff = this.now() - 60_000;
+    const recent = (this.clientLaunchEvents.get(key) || []).filter((timestamp) => timestamp > cutoff);
+    if (recent.length >= limit) {
+      const retryAfter = Math.max(1, Math.ceil((recent[0] + 60_000 - this.now()) / 1000));
+      throw new HttpError(429, 'RESOURCE_EXHAUSTED', 'Trusted client launch quota exceeded', {
+        reason: 'client_launch_rate_exceeded',
+        retryAfter
+      });
+    }
+    recent.push(this.now());
+    this.clientLaunchEvents.set(key, recent);
   }
 
   async authorizeStream(requestId, token) {
@@ -216,7 +253,8 @@ export class JobManager {
     if (
       claims.request_id !== requestId ||
       claims.user_id !== job.userId ||
-      claims.project_id !== job.projectId
+      claims.project_id !== job.projectId ||
+      (claims.routerClient?.clientId || 'legacy') !== job.clientId
     ) {
       throw new HttpError(403, 'PERMISSION_DENIED', 'Request identity mismatch');
     }
@@ -241,7 +279,11 @@ export class JobManager {
   status(requestId, claims) {
     const job = this.jobs.get(requestId);
     if (!job) throw new HttpError(404, 'NOT_FOUND', 'Generation request not found');
-    if (claims.request_id !== requestId || claims.user_id !== job.userId) {
+    if (
+      claims.request_id !== requestId ||
+      claims.user_id !== job.userId ||
+      (claims.routerClient?.clientId || 'legacy') !== job.clientId
+    ) {
       throw new HttpError(403, 'PERMISSION_DENIED', 'Request identity mismatch');
     }
     return publicJob(job);
@@ -250,7 +292,11 @@ export class JobManager {
   cancel(requestId, claims) {
     const job = this.jobs.get(requestId);
     if (!job) throw new HttpError(404, 'NOT_FOUND', 'Generation request not found');
-    if (claims.request_id !== requestId || claims.user_id !== job.userId) {
+    if (
+      claims.request_id !== requestId ||
+      claims.user_id !== job.userId ||
+      (claims.routerClient?.clientId || 'legacy') !== job.clientId
+    ) {
       throw new HttpError(403, 'PERMISSION_DENIED', 'Request identity mismatch');
     }
     if (TERMINAL.has(job.status)) return publicJob(job);
@@ -349,6 +395,7 @@ export class JobManager {
       job.status = 'completed';
     } catch (error) {
       terminalError = error;
+      this.providerHealth?.markQuotaError(modelEntry.provider, error);
       const reason = error?.details?.reason;
       if (reason === 'output_limit_reached') {
         job.status = 'max_tokens';
@@ -387,6 +434,11 @@ export class JobManager {
           console.error(
             `Router callback outbox enqueue failed request_id=${job.id} error_class=${outboxError?.name || 'Error'}`
           );
+          void this.alerts?.emit('callback_outbox_enqueue_failed', {
+            projectId: job.projectId,
+            requestId: job.id,
+            errorClass: outboxError?.name || 'Error'
+          });
         }
       }
       this.publish(job, { type: 'terminal', requestId: job.id, status: job.status });
@@ -420,6 +472,10 @@ export class JobManager {
     const expired = this.outbox.purgeExpired();
     if (expired > 0) {
       console.error(`Router callback outbox entries expired count=${expired}`);
+      void this.alerts?.emit('callback_outbox_entries_expired', {
+        projectId: this.config.backgroundJobs.projectId,
+        count: expired
+      });
     }
     for (const item of this.outbox.due()) {
       try {

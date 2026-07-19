@@ -229,6 +229,33 @@ test('runner converts a provider context error on stderr into a structured 413',
   }
 });
 
+test('runner converts quota stderr into a structured 429 with a reset time', async () => {
+  const runDir = await mkdtemp(path.join(os.tmpdir(), 'cli-router-quota-'));
+  const fakeCodex = path.join(runDir, 'fake-codex');
+  try {
+    await writeFile(fakeCodex, [
+      '#!/bin/sh',
+      'cat >/dev/null',
+      'echo "Usage limit reached; try again in 2 hours" >&2',
+      'exit 1'
+    ].join('\n'));
+    await chmod(fakeCodex, 0o700);
+    await assert.rejects(
+      () => runCliOnce(
+        { prompt: 'prompt', imagePaths: [], runDir },
+        { provider: 'codex', cliModel: 'gpt-test', reasoningEffort: 'medium', contextWindow: 1_000, autoCompactTokenLimit: 900 },
+        { providerBinaries: { codex: fakeCodex }, codexLiveSearch: false, runTimeoutMs: 5_000 }
+      ),
+      (error) => error.statusCode === 429 &&
+        error.details.reason === 'provider_quota_exceeded' &&
+        Number.isFinite(Date.parse(error.details.disabledUntil)) &&
+        error.details.retryAfter > 7_000
+    );
+  } finally {
+    await rm(runDir, { recursive: true, force: true });
+  }
+});
+
 test('Codex sends a 200 KiB system instruction through stdin', async () => {
   const systemInstruction = 's'.repeat(200 * 1024);
   const normalized = {

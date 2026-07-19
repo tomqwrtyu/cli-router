@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { importJWK, jwtVerify } from 'jose';
+import { decodeJwt, decodeProtectedHeader, importJWK, jwtVerify } from 'jose';
 import { HttpError } from './errors.js';
 
 const replayCache = new Map();
@@ -25,14 +25,25 @@ export async function createJwtVerifier(config) {
   if (config.authMode !== 'jwt') {
     throw new Error(`Unsupported ROUTER_AUTH_MODE: ${config.authMode}`);
   }
-  if (!config.jwt.publicJwk) {
+  const trustedClients = config.trustedClients || [];
+  if (trustedClients.length === 0 && !config.jwt.publicJwk) {
     throw new Error('ROUTER_JWT_PUBLIC_JWK is required when ROUTER_AUTH_MODE=jwt');
   }
-  if (!config.jwt.issuer) {
+  if (trustedClients.length === 0 && !config.jwt.issuer) {
     throw new Error('ROUTER_JWT_ISSUER is required when ROUTER_AUTH_MODE=jwt');
   }
 
-  const key = await importJWK(config.jwt.publicJwk, config.jwt.alg);
+  const legacyKey = trustedClients.length === 0
+    ? await importJWK(config.jwt.publicJwk, config.jwt.alg)
+    : null;
+  const clientKeys = new Map();
+  for (const client of trustedClients) {
+    const identity = `${client.issuer}\n${client.audience}\n${client.publicJwk.kid}`;
+    clientKeys.set(identity, {
+      client,
+      key: await importJWK(client.publicJwk, client.alg)
+    });
+  }
 
   return async function verifyRouterJwt(req, url, rawBody) {
     const header = req.headers.authorization || '';
@@ -42,16 +53,50 @@ export async function createJwtVerifier(config) {
     }
 
     let payload;
+    let routerClient = null;
     try {
-      const verified = await jwtVerify(match[1], key, {
-        algorithms: [config.jwt.alg],
-        issuer: config.jwt.issuer,
-        audience: config.jwt.audience,
-        clockTolerance: config.jwt.clockToleranceSeconds
-      });
-      payload = verified.payload;
+      if (trustedClients.length > 0) {
+        const protectedHeader = decodeProtectedHeader(match[1]);
+        const unverified = decodeJwt(match[1]);
+        const audiences = Array.isArray(unverified.aud) ? unverified.aud : [unverified.aud];
+        const matches = audiences
+          .filter((audience) => typeof audience === 'string')
+          .map((audience) => clientKeys.get(`${unverified.iss}\n${audience}\n${protectedHeader.kid}`))
+          .filter(Boolean);
+        if (matches.length !== 1) throw new Error('Unknown trusted client identity');
+        const selected = matches[0];
+        const verified = await jwtVerify(match[1], selected.key, {
+          algorithms: [selected.client.alg],
+          issuer: selected.client.issuer,
+          audience: selected.client.audience,
+          clockTolerance: config.jwt.clockToleranceSeconds
+        });
+        payload = verified.payload;
+        routerClient = selected.client;
+        if (
+          payload.client_id !== routerClient.clientId ||
+          payload.project_ref !== routerClient.projectRef
+        ) {
+          throw new Error('Trusted client claims do not match registry');
+        }
+      } else {
+        const verified = await jwtVerify(match[1], legacyKey, {
+          algorithms: [config.jwt.alg],
+          issuer: config.jwt.issuer,
+          audience: config.jwt.audience,
+          clockTolerance: config.jwt.clockToleranceSeconds
+        });
+        payload = verified.payload;
+      }
     } catch {
       throw new HttpError(401, 'UNAUTHENTICATED', 'Invalid router JWT');
+    }
+
+    const origin = req.headers.origin;
+    if (routerClient && origin && !routerClient.allowedOrigins.includes(origin)) {
+      throw new HttpError(403, 'PERMISSION_DENIED', 'Origin is not allowed for this client', {
+        reason: 'client_origin_denied'
+      });
     }
 
     const nowSeconds = Math.floor(Date.now() / 1000);
@@ -66,7 +111,8 @@ export async function createJwtVerifier(config) {
     if (!payload.jti || typeof payload.jti !== 'string') {
       throw new HttpError(401, 'UNAUTHENTICATED', 'JWT must include jti');
     }
-    if (replayCache.has(payload.jti)) {
+    const replayKey = `${routerClient?.clientId || 'legacy'}:${payload.jti}`;
+    if (replayCache.has(replayKey)) {
       throw new HttpError(401, 'UNAUTHENTICATED', 'JWT jti was already used');
     }
 
@@ -81,7 +127,14 @@ export async function createJwtVerifier(config) {
       throw new HttpError(401, 'UNAUTHENTICATED', 'JWT path does not match');
     }
 
-    replayCache.set(payload.jti, payload.exp + config.jwt.clockToleranceSeconds);
+    replayCache.set(replayKey, payload.exp + config.jwt.clockToleranceSeconds);
+    if (routerClient) payload.routerClient = routerClient;
     return payload;
   };
+}
+
+export function clientAllowsModel(claims, modelId) {
+  const allowedModels = claims?.routerClient?.allowedModels;
+  if (!allowedModels) return true;
+  return allowedModels.includes('*') || allowedModels.includes(modelId);
 }
