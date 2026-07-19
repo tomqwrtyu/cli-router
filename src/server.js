@@ -85,6 +85,7 @@ async function handleGenerate({
     responseHeaders['x-router-request-id'] = callbackContext.requestId;
   }
   const modelEntry = registry[modelId];
+  const startedAt = Date.now();
 
   let limiterEntered = false;
   let normalized;
@@ -156,6 +157,9 @@ async function handleGenerate({
     }
   } catch (error) {
     caughtError = error;
+    console.error(
+      `Generation failed model=${modelId} action=${action} duration_ms=${Date.now() - startedAt} reason=${error?.details?.reason || error?.name || 'unknown'}`
+    );
     if (callbackContext) {
       callbackEvent = buildCallbackEvent({
         context: callbackContext,

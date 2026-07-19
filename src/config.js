@@ -88,7 +88,7 @@ export function loadConfig() {
     },
     modelRegistryPath: process.env.MODEL_REGISTRY_PATH || './config/models.json',
     defaultModel: process.env.DEFAULT_MODEL || 'claude-sonnet-latest',
-    runTimeoutMs: intEnv('RUN_TIMEOUT_MS', 150_000),
+    runTimeoutMs: intEnv('RUN_TIMEOUT_MS', 300_000),
     memoryRunTimeoutMs: intEnv('MEMORY_RUN_TIMEOUT_MS', 600_000),
     maxRequestBytes: intEnv('MAX_REQUEST_BYTES', 30 * 1024 * 1024),
     maxConcurrentRuns: intEnv('MAX_CONCURRENT_RUNS', 2),
