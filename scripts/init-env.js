@@ -55,7 +55,7 @@ const env = [
   'MODEL_REGISTRY_PATH=./config/models.json',
   'DEFAULT_MODEL=claude-sonnet-latest',
   '',
-  'RUN_TIMEOUT_MS=300000',
+  'RUN_TIMEOUT_MS=140000',
   'MAX_REQUEST_BYTES=31457280',
   'MAX_CONCURRENT_RUNS=2',
   'TMP_DIR=/tmp/cli-router',

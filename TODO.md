@@ -16,3 +16,10 @@
 - Parse reset times from provider messages when available, for example Claude's `resets 4:20pm (UTC)` session-limit text.
 - Fall back to a conservative fixed cooldown when no reset time can be parsed.
 - Keep this as an availability optimization only; direct generation must still return 429 when the provider is quota-limited.
+
+## Direct router-backed chat streaming
+
+- Move router-backed chat off the long-lived Supabase Edge proxy path; Free-plan Edge workers have a 150-second wall-clock limit.
+- Reuse the memory flow: authenticate and prepare through Edge, mint a short-lived route-bound JWT, then stream browser-to-router directly.
+- Extend callback settlement to chat so billing remains server-authoritative even though the browser owns the streaming connection.
+- Finalize chat persistence idempotently only after the signed callback marks the router request completed.
