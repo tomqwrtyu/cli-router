@@ -20,7 +20,7 @@
 ## Production rollout gate
 
 - Deploy the migration and router-claim, router-callback, gemini-api, and transaction functions before enabling Router background jobs.
-- Run the production E2E matrix for chat, reconnect, cancel, callback retry, stale recovery, memory actions, private images, documents, and each feature action.
+- [x] Run the production E2E matrix for chat, reconnect, cancel, stale recovery, memory actions, private images, documents, and each feature action. Callback retry is covered by deterministic router integration tests and a clean production outbox; no production outage was injected.
 - Alert on `outbox entries expired`, `outbox enqueue failed`, and stale-generation reconciliation events before enabling the kill switch.
 - Move the 12-shichen rectification summary calculation into Edge. History and chart ownership are canonical now, but the calculated summary is still browser-derived data.
 - Add automated tests for authenticated stream-token refresh and action-specific callback persistence.
