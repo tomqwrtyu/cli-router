@@ -92,6 +92,7 @@ test('callback client signs the raw body and retries transient responses', async
   assert.equal(requests.length, 2);
   assert.deepEqual(waits, [250]);
   const rawBody = requests[0].init.body;
+  assert.equal(requests[0].init.redirect, 'error');
   assert.equal(requests[0].init.headers['x-cli-router-event-id'], context.requestId);
   assert.equal(
     requests[0].init.headers['x-cli-router-signature'],

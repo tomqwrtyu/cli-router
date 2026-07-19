@@ -17,9 +17,15 @@
 - Fall back to a conservative fixed cooldown when no reset time can be parsed.
 - Keep this as an availability optimization only; direct generation must still return 429 when the provider is quota-limited.
 
-## Direct router-backed chat streaming
+## Production rollout gate
 
-- Move router-backed chat off the long-lived Supabase Edge proxy path; Free-plan Edge workers have a 150-second wall-clock limit.
-- Reuse the memory flow: authenticate and prepare through Edge, mint a short-lived route-bound JWT, then stream browser-to-router directly.
-- Extend callback settlement to chat so billing remains server-authoritative even though the browser owns the streaming connection.
-- Finalize chat persistence idempotently only after the signed callback marks the router request completed.
+- Deploy the migration and router-claim, router-callback, gemini-api, and transaction functions before enabling Router background jobs.
+- Run the production E2E matrix for chat, reconnect, cancel, callback retry, stale recovery, memory actions, private images, documents, and each feature action.
+- Alert on `outbox entries expired`, `outbox enqueue failed`, and stale-generation reconciliation events before enabling the kill switch.
+- Move the 12-shichen rectification summary calculation into Edge. History and chart ownership are canonical now, but the calculated summary is still browser-derived data.
+- Add automated tests for authenticated stream-token refresh and action-specific callback persistence.
+
+## Attachment migration
+
+- Copy existing `chat-images` objects to `chat-attachments`, verify object counts and references, then disable and remove the public bucket.
+- Add a scheduled orphan cleanup for unreferenced private uploads older than 24 hours.

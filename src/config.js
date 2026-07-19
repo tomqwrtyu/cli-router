@@ -65,6 +65,38 @@ export function loadConfig() {
     }
   }
 
+  const backgroundJobsEnabled = boolEnv('ENABLE_BACKGROUND_JOBS', false);
+  const projectId = process.env.ROUTER_PROJECT_ID || '';
+  const claimUrl = process.env.ROUTER_CLAIM_URL || '';
+  const claimSecret = process.env.ROUTER_CLAIM_SECRET || '';
+  const streamTokenSecret = process.env.ROUTER_STREAM_TOKEN_SECRET || '';
+  const outboxEncryptionKey = process.env.ROUTER_OUTBOX_ENCRYPTION_KEY || '';
+  if (backgroundJobsEnabled) {
+    const missing = [
+      ['ROUTER_PROJECT_ID', projectId],
+      ['ROUTER_CLAIM_URL', claimUrl],
+      ['ROUTER_CLAIM_SECRET', claimSecret],
+      ['ROUTER_STREAM_TOKEN_SECRET', streamTokenSecret],
+      ['ROUTER_OUTBOX_ENCRYPTION_KEY', outboxEncryptionKey]
+    ].filter(([, value]) => !value).map(([name]) => name);
+    if (missing.length > 0) {
+      throw new Error(`Background jobs require: ${missing.join(', ')}`);
+    }
+    if (Buffer.byteLength(claimSecret) < 32 || Buffer.byteLength(streamTokenSecret) < 32) {
+      throw new Error('ROUTER_CLAIM_SECRET and ROUTER_STREAM_TOKEN_SECRET must be at least 32 bytes');
+    }
+    if (!callbackUrl || !callbackSecret) {
+      throw new Error('Background jobs require ROUTER_CALLBACK_URL and ROUTER_CALLBACK_SECRET');
+    }
+    if (!/^[A-Za-z0-9_-]{1,80}$/.test(projectId)) {
+      throw new Error('ROUTER_PROJECT_ID must contain only letters, numbers, underscores, and hyphens');
+    }
+    const parsedClaimUrl = new URL(claimUrl);
+    if (parsedClaimUrl.protocol !== 'https:' && process.env.NODE_ENV === 'production') {
+      throw new Error('ROUTER_CLAIM_URL must use HTTPS in production');
+    }
+  }
+
   return {
     env: process.env.NODE_ENV || 'development',
     host: process.env.HOST || '127.0.0.1',
@@ -82,13 +114,14 @@ export function loadConfig() {
       claude: boolEnv('ENABLE_CLAUDE', true),
       codex: boolEnv('ENABLE_CODEX', true)
     },
+    codexLiveSearch: boolEnv('ENABLE_CODEX_LIVE_SEARCH', false),
     providerBinaries: {
       claude: process.env.CLAUDE_BIN || 'claude',
       codex: process.env.CODEX_BIN || 'codex'
     },
     modelRegistryPath: process.env.MODEL_REGISTRY_PATH || './config/models.json',
     defaultModel: process.env.DEFAULT_MODEL || 'claude-sonnet-latest',
-    runTimeoutMs: intEnv('RUN_TIMEOUT_MS', 140_000),
+    runTimeoutMs: intEnv('RUN_TIMEOUT_MS', 600_000),
     memoryRunTimeoutMs: intEnv('MEMORY_RUN_TIMEOUT_MS', 600_000),
     maxRequestBytes: intEnv('MAX_REQUEST_BYTES', 30 * 1024 * 1024),
     maxConcurrentRuns: intEnv('MAX_CONCURRENT_RUNS', 2),
@@ -102,6 +135,35 @@ export function loadConfig() {
       secret: callbackSecret,
       timeoutMs: intEnv('ROUTER_CALLBACK_TIMEOUT_MS', 5_000),
       maxAttempts: positiveIntEnv('ROUTER_CALLBACK_MAX_ATTEMPTS', 3)
+    },
+    backgroundJobs: {
+      enabled: backgroundJobsEnabled,
+      projectId,
+      claim: {
+        url: claimUrl,
+        secret: claimSecret,
+        timeoutMs: intEnv('ROUTER_CLAIM_TIMEOUT_MS', 10_000),
+        maxAttempts: positiveIntEnv('ROUTER_CLAIM_MAX_ATTEMPTS', 3),
+        maxResponseBytes: intEnv('ROUTER_CLAIM_MAX_RESPONSE_BYTES', 30 * 1024 * 1024)
+      },
+      streamToken: {
+        secret: streamTokenSecret,
+        issuer: process.env.ROUTER_STREAM_TOKEN_ISSUER || 'cli-router',
+        audience: process.env.ROUTER_STREAM_TOKEN_AUDIENCE || 'mirastral-stream',
+        ttlSeconds: positiveIntEnv('ROUTER_STREAM_TOKEN_TTL_SECONDS', 60)
+      },
+      maxActivePerUser: positiveIntEnv('ROUTER_MAX_ACTIVE_PER_USER', 1),
+      launchesPerMinute: positiveIntEnv('ROUTER_LAUNCHES_PER_MINUTE', 6),
+      cancelCooldownMs: intEnv('ROUTER_CANCEL_COOLDOWN_MS', 3_000),
+      maxOutputTokens: positiveIntEnv('ROUTER_MAX_OUTPUT_TOKENS', 16_384),
+      heartbeatMs: positiveIntEnv('ROUTER_HEARTBEAT_MS', 30_000),
+      terminalRetentionMs: positiveIntEnv('ROUTER_TERMINAL_RETENTION_MS', 15 * 60_000),
+      outbox: {
+        rootDir: process.env.ROUTER_OUTBOX_DIR || '/var/lib/cli-router/outbox',
+        encryptionKey: outboxEncryptionKey,
+        retentionMs: positiveIntEnv('ROUTER_OUTBOX_RETENTION_MS', 24 * 60 * 60_000),
+        retryIntervalMs: positiveIntEnv('ROUTER_OUTBOX_RETRY_INTERVAL_MS', 5_000)
+      }
     },
     usage: {
       imageFallbackTokens: intEnv('IMAGE_PROMPT_TOKEN_ESTIMATE', 258),

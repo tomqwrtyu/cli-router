@@ -71,12 +71,10 @@ async function signRouterJwt(path: string, method: string, body: Uint8Array): Pr
 }
 
 function corsHeaders(origin: string | null): HeadersInit {
-  const allowedOrigin = ALLOWED_ORIGINS.length === 0
-    ? (origin || '*')
-    : (origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0])
+  const allowedOrigin = origin && ALLOWED_ORIGINS.includes(origin) ? origin : null
 
   return {
-    'access-control-allow-origin': allowedOrigin,
+    ...(allowedOrigin ? { 'access-control-allow-origin': allowedOrigin } : {}),
     'access-control-allow-headers': 'authorization, x-client-info, apikey, content-type',
     'access-control-allow-methods': 'POST, GET, OPTIONS',
     vary: 'origin'
@@ -99,23 +97,10 @@ function jsonResponse(body: unknown, status: number, cors: HeadersInit): Respons
   })
 }
 
-function decodeJwtPayload(token: string): Record<string, unknown> | null {
-  try {
-    const payload = token.split('.')[1]
-    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
-    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=')
-    return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(padded), (char) => char.charCodeAt(0))))
-  } catch {
-    return null
-  }
-}
-
-function userIdFromRequest(req: Request): string | null {
+function userTokenFromRequest(req: Request): string | null {
   const header = req.headers.get('authorization') || ''
   const match = /^Bearer\s+(.+)$/i.exec(header)
-  if (!match) return null
-  const payload = decodeJwtPayload(match[1])
-  return typeof payload?.sub === 'string' ? payload.sub : null
+  return match?.[1] || null
 }
 
 function modelIdFromRouterPath(path: string): string | null {
@@ -211,10 +196,13 @@ Deno.serve(async (req) => {
     return new Response(null, { status: 204, headers: cors })
   }
 
-  const userId = userIdFromRequest(req)
-  if (!userId) {
+  const userToken = userTokenFromRequest(req)
+  if (!userToken) {
     return jsonResponse({ error: 'Missing authenticated user' }, 401, cors)
   }
+  const { data: authData, error: authError } = await supabaseAdmin.auth.getUser(userToken)
+  const userId = authData.user?.id
+  if (authError || !userId) return jsonResponse({ error: 'Invalid authenticated user' }, 401, cors)
 
   const routerPath = routerPathFromRequest(req)
   const incomingUrl = new URL(req.url)
@@ -238,37 +226,6 @@ Deno.serve(async (req) => {
     })
   }
 
-  if (requestedModel) {
-    const { models } = await fetchRouterModelsPayload()
-    const requestedRouterModel = models.find((model) => modelIdFromModelName(model.name) === requestedModel)
-    if (!requestedRouterModel) {
-      return jsonResponse({ error: 'Model not enabled' }, 404, cors)
-    }
-    if (!isModelAllowed(userPolicy, requestedRouterModel)) {
-      return jsonResponse({ error: 'Model not allowed' }, 403, cors)
-    }
-  }
-
-  const body = req.method === 'GET' ? new Uint8Array() : new Uint8Array(await req.arrayBuffer())
-  const token = await signRouterJwt(routerUrl.pathname, req.method, body)
-
-  const upstream = await fetch(routerUrl, {
-    method: req.method,
-    headers: {
-      authorization: `Bearer ${token}`,
-      'content-type': req.headers.get('content-type') || 'application/json',
-      accept: req.headers.get('accept') || '*/*'
-    },
-    body: req.method === 'GET' ? undefined : body
-  })
-
-  const headers = new Headers(upstream.headers)
-  for (const [key, value] of Object.entries(cors)) {
-    headers.set(key, value)
-  }
-
-  return new Response(upstream.body, {
-    status: upstream.status,
-    headers
-  })
+  if (requestedModel) return jsonResponse({ error: 'Direct generation is disabled' }, 403, cors)
+  return jsonResponse({ error: 'Route not found' }, 404, cors)
 })

@@ -18,7 +18,7 @@ Frontend
 
 Do not forward the user's Supabase session token to this router. The router JWT is a separate service-to-service token with a 60 second lifetime, `jti` replay protection, and a `body_sha256` claim bound to the exact request body.
 
-For memory condensation/increment operations, the router can send a signed completion callback to a dedicated Edge Function. The complete JWT claims, HMAC format, payload, retries, and idempotency requirements are defined in [docs/edge-memory-callback-contract.md](docs/edge-memory-callback-contract.md).
+The accepted background generation, billing, private-payload, streaming, and recovery contract is defined in [docs/background-generation-architecture.md](docs/background-generation-architecture.md).
 
 ## Setup
 
@@ -82,7 +82,26 @@ Configure exact browser origins and the optional callback destination in `.env`:
 CORS_ALLOWED_ORIGINS=https://www.example.com,https://example.com
 ROUTER_CALLBACK_URL=https://your-project.supabase.co/functions/v1/router-callback
 ROUTER_CALLBACK_SECRET=replace-with-at-least-32-random-bytes
+ENABLE_BACKGROUND_JOBS=true
+ROUTER_PROJECT_ID=your-project-ref
+ROUTER_CLAIM_URL=https://your-project.supabase.co/functions/v1/router-claim
+ROUTER_CLAIM_SECRET=replace-with-at-least-32-random-bytes
+ROUTER_STREAM_TOKEN_SECRET=replace-with-at-least-32-random-bytes
+ROUTER_OUTBOX_ENCRYPTION_KEY=replace-with-32-byte-base64-or-hex
 ```
+
+Generate the local background-job secrets and matching project endpoints, then sync
+only the required server secrets to Supabase:
+
+```bash
+npm run configure:background -- your-project-ref https://your-router.example.com
+npm run sync:background-secrets -- your-project-ref
+```
+
+Keep `ENABLE_BACKGROUND_JOBS=false` until the database migration and the matching
+Edge Functions have been deployed and the production E2E gate has passed. While it
+is false, `/v1/jobs` rejects launches and `/v1beta/models` returns no Router models,
+so the Supabase user-policy intersection fails closed.
 
 Requests from Edge Functions without an `Origin` header are unaffected by the browser CORS allowlist. The callback URL and secret must either both be configured or both be empty.
 
@@ -93,7 +112,18 @@ GET  /health
 GET  /v1beta/models
 POST /v1beta/models/:model:generateContent
 POST /v1beta/models/:model:streamGenerateContent?alt=sse
+POST /v1/jobs
+GET  /v1/jobs/:requestId/stream
+POST /v1/jobs/:requestId/stream-token
+GET  /v1/jobs/:requestId
+POST /v1/jobs/:requestId/cancel
 ```
+
+Launch, status, cancellation, and stream-token refresh requests require a signed
+Edge-to-Router JWT. The browser receives only a short-lived, one-use `stream:read`
+token; it cannot launch, cancel, or inspect another user's job. Reconnecting clients
+request a fresh stream token through the authenticated Edge Function and replace
+their local output with the Router's `snapshot` event before accepting new deltas.
 
 ## Calling From Existing Supabase Edge Functions
 
@@ -230,9 +260,9 @@ set blocked_router_models = array['gpt-5.6-sol']::text[]
 where id = '<user-id>';
 ```
 
-The Supabase Edge Function also checks the policy before proxying
-`generateContent` or `streamGenerateContent`, so hiding a model from the UI is
-not the security boundary.
+The public Supabase `cli-router` function is a read-only model catalog. It does
+not proxy generation calls. Generation must pass through the authenticated,
+metered prepare-and-launch flow in `gemini-api`.
 
 ## Attachments
 

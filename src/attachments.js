@@ -104,7 +104,7 @@ async function downloadFile(uri, mimeType, config) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.attachments.downloadTimeoutMs);
   try {
-    const response = await fetch(uri, { signal: controller.signal });
+    const response = await fetch(uri, { signal: controller.signal, redirect: 'error' });
     if (!response.ok) {
       throw new HttpError(422, 'INVALID_ARGUMENT', 'Attachment fetch failed', {
         reason: 'attachment_fetch_failed',
@@ -224,6 +224,30 @@ function imageDimensions(mimeType, buffer) {
   return null;
 }
 
+function assertMagicBytes(mimeType, buffer) {
+  const valid = (() => {
+    if (mimeType === 'image/png') {
+      return buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    }
+    if (mimeType === 'image/jpeg') {
+      return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+    }
+    if (mimeType === 'image/webp') {
+      return buffer.length >= 12 && buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP';
+    }
+    if (mimeType === 'application/pdf') return buffer.length >= 5 && buffer.toString('ascii', 0, 5) === '%PDF-';
+    if (mimeType === 'text/plain') return !buffer.includes(0);
+    if (mimeType === 'application/json') return !buffer.includes(0);
+    return false;
+  })();
+  if (!valid) {
+    throw new HttpError(422, 'INVALID_ARGUMENT', 'Attachment content does not match its MIME type', {
+      reason: 'attachment_magic_mismatch',
+      mimeType
+    });
+  }
+}
+
 function truncateText(text, maxChars) {
   if (text.length <= maxChars) return { text, truncated: false };
   return { text: text.slice(0, maxChars), truncated: true };
@@ -283,6 +307,7 @@ export async function materializePart(part, { config, runDir, modelEntry }) {
   const buffer = part.fileData
     ? await downloadFile(fileUri, mimeType, config)
     : decodeInlineData(part.inlineData, mimeType, config);
+  assertMagicBytes(mimeType, buffer);
 
   if (isImage) {
     if (!modelEntry.supportsImages) {

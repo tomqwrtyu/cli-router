@@ -39,7 +39,11 @@ KillSignal=SIGTERM
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ReadWritePaths=$APP_DIR /tmp
+StateDirectory=cli-router
+StateDirectoryMode=0700
+ReadWritePaths=$APP_DIR /tmp /var/lib/cli-router
+UMask=0077
+KillMode=control-group
 
 [Install]
 WantedBy=multi-user.target

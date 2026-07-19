@@ -66,6 +66,31 @@ export function buildCallbackEvent({ context, modelId, provider, usageMetadata =
   };
 }
 
+export function buildJobCallbackEvent({ job, usageMetadata = null, error = null }) {
+  const completedAt = new Date().toISOString();
+  return {
+    version: 2,
+    event: 'router.generation.terminal',
+    projectId: job.projectId,
+    requestId: job.id,
+    userId: job.userId,
+    sessionId: job.sessionId || null,
+    chartId: job.chartId || null,
+    messageId: job.messageId || null,
+    action: job.action,
+    model: job.model,
+    provider: job.provider,
+    status: job.status,
+    output: job.output,
+    usageMetadata,
+    usageSource: usageMetadata?.usageSource || (usageMetadata ? 'estimated' : null),
+    webSearchEnabled: Boolean(job.webSearchEnabled),
+    error: error ? safeError(error) : null,
+    startedAt: job.startedAt ? new Date(job.startedAt).toISOString() : null,
+    completedAt
+  };
+}
+
 export function signCallbackBody(secret, timestamp, rawBody) {
   return crypto
     .createHmac('sha256', secret)
@@ -97,7 +122,8 @@ export function createCallbackClient(config, options = {}) {
             'x-cli-router-signature': `v1=${signature}`
           },
           body: rawBody,
-          signal: AbortSignal.timeout(config.timeoutMs)
+          signal: AbortSignal.timeout(config.timeoutMs),
+          redirect: 'error'
         });
         if (response.ok) {
           await response.body?.cancel();

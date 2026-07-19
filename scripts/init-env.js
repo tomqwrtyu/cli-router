@@ -15,6 +15,9 @@ try {
 
 const { privateKey, publicKey } = await generateKeyPair('ES256', { extractable: true });
 const kid = crypto.randomUUID();
+const claimSecret = crypto.randomBytes(32).toString('base64url');
+const streamTokenSecret = crypto.randomBytes(32).toString('base64url');
+const outboxEncryptionKey = crypto.randomBytes(32).toString('base64');
 const privateJwk = await exportJWK(privateKey);
 const publicJwk = await exportJWK(publicKey);
 
@@ -48,14 +51,38 @@ const env = [
   'ROUTER_CALLBACK_TIMEOUT_MS=5000',
   'ROUTER_CALLBACK_MAX_ATTEMPTS=3',
   '',
+  'ENABLE_BACKGROUND_JOBS=false',
+  'ROUTER_PUBLIC_URL=https://router.example.com',
+  'ROUTER_PROJECT_ID=replace-with-project-ref',
+  'ROUTER_CLAIM_URL=https://replace-with-project-ref.supabase.co/functions/v1/router-claim',
+  `ROUTER_CLAIM_SECRET=${claimSecret}`,
+  'ROUTER_CLAIM_TIMEOUT_MS=10000',
+  'ROUTER_CLAIM_MAX_ATTEMPTS=3',
+  `ROUTER_STREAM_TOKEN_SECRET=${streamTokenSecret}`,
+  'ROUTER_STREAM_TOKEN_ISSUER=cli-router',
+  'ROUTER_STREAM_TOKEN_AUDIENCE=mirastral-stream',
+  'ROUTER_STREAM_TOKEN_TTL_SECONDS=60',
+  `ROUTER_OUTBOX_ENCRYPTION_KEY=${outboxEncryptionKey}`,
+  'ROUTER_OUTBOX_DIR=/var/lib/cli-router/outbox',
+  'ROUTER_OUTBOX_RETENTION_MS=86400000',
+  'ROUTER_OUTBOX_RETRY_INTERVAL_MS=5000',
+  'ROUTER_MAX_ACTIVE_PER_USER=1',
+  'ROUTER_LAUNCHES_PER_MINUTE=6',
+  'ROUTER_CANCEL_COOLDOWN_MS=3000',
+  'ROUTER_MAX_OUTPUT_TOKENS=16384',
+  'ROUTER_HEARTBEAT_MS=30000',
+  'ROUTER_TERMINAL_RETENTION_MS=900000',
+  '',
   'ENABLE_CLAUDE=true',
   'ENABLE_CODEX=true',
+  'ENABLE_CODEX_LIVE_SEARCH=true',
   'CLAUDE_BIN=claude',
   'CODEX_BIN=codex',
   'MODEL_REGISTRY_PATH=./config/models.json',
   'DEFAULT_MODEL=claude-sonnet-latest',
   '',
-  'RUN_TIMEOUT_MS=140000',
+  'RUN_TIMEOUT_MS=600000',
+  'MEMORY_RUN_TIMEOUT_MS=600000',
   'MAX_REQUEST_BYTES=31457280',
   'MAX_CONCURRENT_RUNS=2',
   'TMP_DIR=/tmp/cli-router',

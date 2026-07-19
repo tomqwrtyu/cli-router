@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
 import { HttpError } from './errors.js';
 
@@ -34,6 +35,7 @@ export function providerCommand(normalized, modelEntry, config, options = {}) {
 
   if (modelEntry.provider === 'codex') {
     const args = [
+      ...(config.codexLiveSearch && normalized.webSearchEnabled !== false ? ['--search'] : []),
       'exec',
       '--ephemeral',
       '--ignore-user-config',
@@ -114,7 +116,8 @@ function normalizeProviderError(provider, output, code) {
   return new HttpError(502, 'UNAVAILABLE', `Provider CLI failed with exit code ${code}`, {
     reason: 'provider_cli_failed',
     provider,
-    stderr: output.slice(-2000)
+    diagnosticHash: crypto.createHash('sha256').update(output).digest('hex'),
+    diagnosticLength: Buffer.byteLength(output)
   });
 }
 
@@ -122,16 +125,26 @@ function emptyProviderError(provider, diagnostic = '') {
   if (isContextLimitOutput(diagnostic) || isQuotaOutput(diagnostic)) {
     return normalizeProviderError(provider, diagnostic, 0);
   }
-  const safeDiagnostic = diagnostic
-    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [REDACTED]')
-    .slice(-2000);
-  if (safeDiagnostic) {
-    console.error(`Provider CLI completed without output provider=${provider} stderr=${JSON.stringify(safeDiagnostic)}`);
+  if (diagnostic) {
+    const diagnosticHash = crypto.createHash('sha256').update(diagnostic).digest('hex');
+    console.error(
+      `Provider CLI completed without output provider=${provider} diagnostic_hash=${diagnosticHash} diagnostic_bytes=${Buffer.byteLength(diagnostic)}`
+    );
   }
   return new HttpError(502, 'UNAVAILABLE', 'Provider CLI completed without a response', {
     reason: 'provider_empty_output',
     provider
   });
+}
+
+function terminateProcessGroup(child, signal) {
+  if (!child.pid) return;
+  try {
+    if (process.platform !== 'win32') process.kill(-child.pid, signal);
+    else child.kill(signal);
+  } catch (error) {
+    if (error.code !== 'ESRCH') throw error;
+  }
 }
 
 export function runCliOnce(normalized, modelEntry, config) {
@@ -145,14 +158,15 @@ export function runCliOnce(normalized, modelEntry, config) {
       env: {
         ...process.env,
         NO_COLOR: '1'
-      }
+      },
+      detached: process.platform !== 'win32'
     });
 
     const stdout = [];
     const stderr = [];
     const timeout = setTimeout(() => {
-      child.kill('SIGTERM');
-      setTimeout(() => child.kill('SIGKILL'), 2_000).unref();
+      terminateProcessGroup(child, 'SIGTERM');
+      setTimeout(() => terminateProcessGroup(child, 'SIGKILL'), 2_000).unref();
     }, config.runTimeoutMs);
     if (hasStdin) {
       child.stdin.end(stdin);
@@ -199,7 +213,7 @@ export function runCliOnce(normalized, modelEntry, config) {
   });
 }
 
-export function streamCli(normalized, modelEntry, config, onText) {
+export function streamCli(normalized, modelEntry, config, onText, options = {}) {
   const { command, args, stdin } = providerCommand(normalized, modelEntry, config, { stream: true });
   const hasStdin = stdin !== undefined;
 
@@ -210,15 +224,24 @@ export function streamCli(normalized, modelEntry, config, onText) {
       env: {
         ...process.env,
         NO_COLOR: '1'
-      }
+      },
+      detached: process.platform !== 'win32'
     });
 
     const stdout = [];
     const stderr = [];
-    const timeout = setTimeout(() => {
-      child.kill('SIGTERM');
-      setTimeout(() => child.kill('SIGKILL'), 2_000).unref();
-    }, config.runTimeoutMs);
+    let terminationReason = null;
+    let providerUsage = null;
+    const terminate = (reason) => {
+      if (terminationReason) return;
+      terminationReason = reason;
+      terminateProcessGroup(child, 'SIGTERM');
+      setTimeout(() => terminateProcessGroup(child, 'SIGKILL'), 2_000).unref();
+    };
+    const timeout = setTimeout(() => terminate('timeout'), config.runTimeoutMs);
+    const abortHandler = () => terminate(options.signal?.reason || 'cancelled');
+    if (options.signal?.aborted) abortHandler();
+    else options.signal?.addEventListener('abort', abortHandler, { once: true });
     if (hasStdin) {
       child.stdin.end(stdin);
     }
@@ -245,6 +268,17 @@ export function streamCli(normalized, modelEntry, config, onText) {
       if (event.type === 'error' || (event.type === 'result' && event.is_error)) {
         claudeStreamError = event.error?.message || event.result || JSON.stringify(event);
       }
+      if (event.type === 'result' && event.usage) {
+        providerUsage = {
+          promptTokenCount: Number(event.usage.input_tokens || 0),
+          candidatesTokenCount: Number(event.usage.output_tokens || 0),
+          totalTokenCount: Number(event.usage.input_tokens || 0) + Number(event.usage.output_tokens || 0),
+          cacheReadTokenCount: Number(event.usage.cache_read_input_tokens || 0),
+          cacheWriteTokenCount: Number(event.usage.cache_creation_input_tokens || 0),
+          estimated: false,
+          usageSource: 'provider'
+        };
+      }
     };
     const handleCodexLine = (line) => {
       if (!line.trim()) return;
@@ -257,6 +291,25 @@ export function streamCli(normalized, modelEntry, config, onText) {
       if (event.type === 'item.completed' && event.item?.type === 'agent_message' && event.item.text) {
         codexSawAgentMessage = true;
         onText(event.item.text);
+      }
+      if (event.type === 'item.started' || event.type === 'item.completed') {
+        const itemType = event.item?.type;
+        if (itemType && itemType !== 'agent_message' && itemType !== 'reasoning') {
+          options.onEvent?.({ type: 'provider_status', status: event.type, itemType });
+        }
+      }
+      if (event.type === 'turn.completed' && event.usage) {
+        const input = Number(event.usage.input_tokens || 0);
+        const output = Number(event.usage.output_tokens || 0);
+        providerUsage = {
+          promptTokenCount: input,
+          candidatesTokenCount: output,
+          totalTokenCount: input + output,
+          cachedInputTokenCount: Number(event.usage.cached_input_tokens || 0),
+          reasoningTokenCount: Number(event.usage.reasoning_tokens || 0),
+          estimated: false,
+          usageSource: 'provider'
+        };
       }
       if (event.type === 'error' || event.type === 'turn.failed') {
         codexStreamError = event.error?.message || event.message || JSON.stringify(event);
@@ -293,6 +346,7 @@ export function streamCli(normalized, modelEntry, config, onText) {
     });
     child.on('error', (error) => {
       clearTimeout(timeout);
+      options.signal?.removeEventListener('abort', abortHandler);
       reject(new HttpError(502, 'UNAVAILABLE', `Failed to start provider CLI: ${error.message}`, {
         reason: 'provider_cli_start_failed',
         provider: modelEntry.provider
@@ -300,6 +354,7 @@ export function streamCli(normalized, modelEntry, config, onText) {
     });
     child.on('close', (code, signal) => {
       clearTimeout(timeout);
+      options.signal?.removeEventListener('abort', abortHandler);
       if (modelEntry.provider === 'claude') {
         claudeLineBuffer += claudeDecoder.end();
         if (claudeLineBuffer) handleClaudeLine(claudeLineBuffer);
@@ -308,9 +363,26 @@ export function streamCli(normalized, modelEntry, config, onText) {
         codexLineBuffer += codexDecoder.end();
         if (codexLineBuffer) handleCodexLine(codexLineBuffer);
       }
-      if (signal) {
+      if (terminationReason === 'timeout') {
         reject(new HttpError(504, 'DEADLINE_EXCEEDED', 'Provider CLI timed out', {
           reason: 'provider_timeout',
+          provider: modelEntry.provider
+        }));
+        return;
+      }
+      if (terminationReason) {
+        const outputLimit = terminationReason === 'max_tokens';
+        reject(new HttpError(outputLimit ? 413 : 499, outputLimit ? 'RESOURCE_EXHAUSTED' : 'CANCELLED', outputLimit
+          ? 'Provider output reached the configured limit'
+          : 'Provider generation was cancelled', {
+          reason: outputLimit ? 'output_limit_reached' : 'provider_cancelled',
+          provider: modelEntry.provider
+        }));
+        return;
+      }
+      if (signal) {
+        reject(new HttpError(502, 'UNAVAILABLE', 'Provider CLI terminated unexpectedly', {
+          reason: 'provider_cli_terminated',
           provider: modelEntry.provider
         }));
         return;
@@ -337,7 +409,7 @@ export function streamCli(normalized, modelEntry, config, onText) {
         reject(emptyProviderError(modelEntry.provider, err.trim()));
         return;
       }
-      resolve();
+      resolve({ usageMetadata: providerUsage });
     });
   });
 }

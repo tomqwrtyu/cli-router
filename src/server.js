@@ -4,12 +4,16 @@ import { fileURLToPath } from 'node:url';
 import { loadConfig, loadModelRegistry } from './config.js';
 import { createJwtVerifier } from './auth.js';
 import { buildCallbackEvent, callbackContextFromJwt, createCallbackClient } from './callback.js';
+import { createClaimClient } from './claim.js';
 import { createCorsPolicy } from './cors.js';
 import { assertPromptWithinModelLimits, estimateUsageMetadata, geminiDoneChunk, geminiTextChunk, geminiTextResponse, normalizeGeminiRequest } from './gemini.js';
 import { geminiError } from './errors.js';
-import { readRequestBody, sendJson, sendSseHeaders, writeSseData } from './http.js';
+import { readRequestBody, sendJson, sendSseHeaders, writeSseData, writeSseEvent } from './http.js';
 import { HttpError } from './errors.js';
 import { runCliOnce, streamCli } from './cli.js';
+import { JobManager } from './job-manager.js';
+import { createEncryptedOutbox } from './outbox.js';
+import { createStreamTokenService } from './stream-token.js';
 
 const routePattern = /^\/v1beta\/models\/([^/]+):(generateContent|streamGenerateContent)$/;
 
@@ -33,6 +37,12 @@ function parseJson(buffer) {
   } catch {
     throw new HttpError(400, 'INVALID_ARGUMENT', 'Request body must be valid JSON');
   }
+}
+
+function bearerToken(req) {
+  const match = /^Bearer\s+(.+)$/i.exec(req.headers.authorization || '');
+  if (!match) throw new HttpError(401, 'UNAUTHENTICATED', 'Missing bearer token');
+  return match[1];
 }
 
 class RunLimiter {
@@ -190,11 +200,8 @@ async function handleGenerate({
   return true;
 }
 
-async function handleModels({ req, res, url, config, registry, verifyJwt, responseHeaders }) {
-  if (req.method !== 'GET' || url.pathname !== '/v1beta/models') return false;
-  const rawBody = Buffer.alloc(0);
-  await verifyJwt(req, url, rawBody);
-  const models = Object.entries(registry)
+export function buildModelCatalog(config, registry) {
+  return (config.backgroundJobs.enabled ? Object.entries(registry) : [])
     .filter(([, entry]) => entry.enabled !== false && config.providers[entry.provider])
     .map(([name, entry]) => ({
       name: `models/${name}`,
@@ -207,10 +214,83 @@ async function handleModels({ req, res, url, config, registry, verifyJwt, respon
       contextWindow: entry.contextWindow || null,
       inputCharLimit: entry.inputCharLimit || null,
       inputTokenLimit: entry.inputTokenLimit || null,
-      outputTokenLimit: entry.outputTokenLimit || null
+      outputTokenLimit: entry.outputTokenLimit || null,
+      capabilities: {
+        backgroundJobs: config.backgroundJobs.enabled,
+        liveWebSearch: entry.provider === 'codex' && config.codexLiveSearch
+      }
     }));
+}
+
+async function handleModels({ req, res, url, config, registry, verifyJwt, responseHeaders }) {
+  if (req.method !== 'GET' || url.pathname !== '/v1beta/models') return false;
+  const rawBody = Buffer.alloc(0);
+  await verifyJwt(req, url, rawBody);
+  const models = buildModelCatalog(config, registry);
   sendJson(res, 200, { models }, responseHeaders);
   return true;
+}
+
+async function handleJobs({ req, res, url, config, verifyJwt, jobManager, responseHeaders }) {
+  if (!url.pathname.startsWith('/v1/jobs')) return false;
+  if (!config.backgroundJobs.enabled || !jobManager) {
+    throw new HttpError(503, 'UNAVAILABLE', 'Background Router jobs are disabled', {
+      reason: 'background_jobs_disabled'
+    });
+  }
+
+  if (req.method === 'POST' && url.pathname === '/v1/jobs') {
+    const rawBody = await readRequestBody(req, 64 * 1024);
+    const claims = await verifyJwt(req, url, rawBody);
+    const result = await jobManager.launch(parseJson(rawBody), claims);
+    sendJson(res, 202, result, responseHeaders);
+    return true;
+  }
+
+  const streamMatch = /^\/v1\/jobs\/([0-9a-f-]+)\/stream$/i.exec(url.pathname);
+  if (req.method === 'GET' && streamMatch) {
+    const job = await jobManager.authorizeStream(streamMatch[1], bearerToken(req));
+    sendSseHeaders(res, responseHeaders);
+    let unsubscribe = () => {};
+    const close = () => {
+      unsubscribe();
+      if (!res.writableEnded) res.end();
+    };
+    unsubscribe = jobManager.subscribe(job, (event) => {
+      if (event === null) {
+        close();
+        return;
+      }
+      if (!res.destroyed && !res.writableEnded) writeSseEvent(res, event);
+    });
+    req.on('close', unsubscribe);
+    return true;
+  }
+
+  const streamTokenMatch = /^\/v1\/jobs\/([0-9a-f-]+)\/stream-token$/i.exec(url.pathname);
+  if (req.method === 'POST' && streamTokenMatch) {
+    const rawBody = await readRequestBody(req, 1024);
+    const claims = await verifyJwt(req, url, rawBody);
+    const streamToken = await jobManager.issueStreamToken(streamTokenMatch[1], claims);
+    sendJson(res, 200, { streamToken }, responseHeaders);
+    return true;
+  }
+
+  const jobMatch = /^\/v1\/jobs\/([0-9a-f-]+)(?:\/(cancel))?$/i.exec(url.pathname);
+  if (jobMatch && req.method === 'GET' && !jobMatch[2]) {
+    const rawBody = Buffer.alloc(0);
+    const claims = await verifyJwt(req, url, rawBody);
+    sendJson(res, 200, { request: jobManager.status(jobMatch[1], claims) }, responseHeaders);
+    return true;
+  }
+  if (jobMatch && req.method === 'POST' && jobMatch[2] === 'cancel') {
+    const rawBody = await readRequestBody(req, 1024);
+    const claims = await verifyJwt(req, url, rawBody);
+    sendJson(res, 202, { request: jobManager.cancel(jobMatch[1], claims) }, responseHeaders);
+    return true;
+  }
+
+  throw new HttpError(404, 'NOT_FOUND', 'Job route not found');
 }
 
 function handleHealth(req, res, url, responseHeaders) {
@@ -229,6 +309,23 @@ export async function main() {
   const limiter = new RunLimiter(config.maxConcurrentRuns);
   const corsPolicy = createCorsPolicy(config.cors);
   const callbackClient = createCallbackClient(config.callback);
+  let jobManager = null;
+  if (config.backgroundJobs.enabled) {
+    const claimClient = createClaimClient(config.backgroundJobs.claim);
+    const streamTokens = createStreamTokenService(config.backgroundJobs.streamToken);
+    const outbox = createEncryptedOutbox(
+      config.backgroundJobs.outbox,
+      config.backgroundJobs.projectId
+    );
+    jobManager = new JobManager({
+      config,
+      registry,
+      claimClient,
+      streamTokens,
+      callbackClient,
+      outbox
+    });
+  }
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
@@ -237,6 +334,15 @@ export async function main() {
       responseHeaders = corsPolicy.headersForRequest(req);
       if (corsPolicy.handlePreflight(req, res, responseHeaders)) return;
       if (handleHealth(req, res, url, responseHeaders)) return;
+      if (await handleJobs({
+        req,
+        res,
+        url,
+        config,
+        verifyJwt,
+        jobManager,
+        responseHeaders
+      })) return;
       if (await handleModels({ req, res, url, config, registry, verifyJwt, responseHeaders })) return;
       if (req.method === 'POST' && await handleGenerate({
         req,
@@ -252,6 +358,9 @@ export async function main() {
       throw new HttpError(404, 'NOT_FOUND', 'Route not found');
     } catch (error) {
       const { statusCode, body } = geminiError(error);
+      if (error?.details?.retryAfter) {
+        responseHeaders['retry-after'] = String(error.details.retryAfter);
+      }
       if (!res.headersSent) {
         sendJson(res, statusCode, body, responseHeaders);
       } else {
@@ -264,6 +373,12 @@ export async function main() {
   server.listen(config.port, config.host, () => {
     console.log(`cli-router listening on http://${config.host}:${config.port}`);
   });
+  const shutdown = () => {
+    jobManager?.close();
+    server.close();
+  };
+  process.once('SIGTERM', shutdown);
+  process.once('SIGINT', shutdown);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

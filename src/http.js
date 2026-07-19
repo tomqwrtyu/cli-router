@@ -39,3 +39,7 @@ export function sendSseHeaders(res, headers = {}) {
 export function writeSseData(res, payload) {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
+
+export function writeSseEvent(res, event) {
+  res.write(`event: ${event.type || 'message'}\ndata: ${JSON.stringify(event)}\n\n`);
+}
