@@ -6,13 +6,13 @@ function assert(condition: unknown, message: string): asserts condition {
 
 const cap = parseBillingCap(JSON.stringify({
   unit: 'credits_per_1m_tokens',
-  input: 2,
-  output: 12,
+  input: 1.5,
+  output: 9,
   costMultiplier: 2,
-  referenceModel: 'gemini-3.1-pro-preview',
+  referenceModel: 'gemini-3.5-flash',
 }))
 
-Deno.test('caps expensive client billing at Gemini Pro rates', () => {
+Deno.test('caps expensive client billing at Gemini Flash rates', () => {
   const billing = applyBillingCap({
     unit: 'credits_per_1m_tokens',
     input: 5,
@@ -20,10 +20,10 @@ Deno.test('caps expensive client billing at Gemini Pro rates', () => {
     costMultiplier: 2,
     estimatedUsage: true,
   }, cap)
-  assert(billing?.input === 2, 'input rate was not capped')
-  assert(billing?.output === 12, 'output rate was not capped')
+  assert(billing?.input === 1.5, 'input rate was not capped')
+  assert(billing?.output === 9, 'output rate was not capped')
   assert(billing?.costMultiplier === 2, 'multiplier changed unexpectedly')
-  assert(billing?.priceCeilingModel === 'gemini-3.1-pro-preview', 'reference model is missing')
+  assert(billing?.priceCeilingModel === 'gemini-3.5-flash', 'reference model is missing')
 })
 
 Deno.test('preserves models already cheaper than the client ceiling', () => {

@@ -25,7 +25,7 @@ Optional per-project billing policy:
 
 - `ROUTER_BILLING_CAP_JSON`: caps, but never raises, Router billing returned by
   this project. Example:
-  `{"unit":"credits_per_1m_tokens","input":2,"output":12,"costMultiplier":2,"referenceModel":"gemini-3.1-pro-preview"}`
+  `{"unit":"credits_per_1m_tokens","input":1.5,"output":9,"costMultiplier":2,"referenceModel":"gemini-3.5-flash"}`
 
 The capped metadata is used by Mirastral for model display, credit holds, and
 final settlement. It does not modify the Node router's global model catalog or
