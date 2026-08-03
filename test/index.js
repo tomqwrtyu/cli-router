@@ -7,4 +7,5 @@ import './cli.test.js';
 import './cors.test.js';
 import './gemini.test.js';
 import './jobs.test.js';
+import './maintenance.test.js';
 import './provider-health.test.js';

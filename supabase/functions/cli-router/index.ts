@@ -1,6 +1,7 @@
 import { SignJWT, importJWK } from 'npm:jose@5.9.6'
 import { createClient } from 'npm:@supabase/supabase-js'
 import { applyBillingCap, parseBillingCap } from './billing-policy.ts'
+import { isApplicationMaintenance, maintenanceResponse } from './maintenance.ts'
 
 const ROUTER_URL = Deno.env.get('ROUTER_URL')
 const ROUTER_JWT_PRIVATE_JWK = Deno.env.get('ROUTER_JWT_PRIVATE_JWK')
@@ -200,6 +201,10 @@ Deno.serve(async (req) => {
 
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: cors })
+  }
+
+  if (isApplicationMaintenance()) {
+    return maintenanceResponse(cors)
   }
 
   const userToken = userTokenFromRequest(req)

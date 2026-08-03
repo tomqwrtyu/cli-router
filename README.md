@@ -138,6 +138,15 @@ token; it cannot launch, cancel, or inspect another user's job. Reconnecting cli
 request a fresh stream token through the authenticated Edge Function and replace
 their local output with the Router's `snapshot` event before accepting new deltas.
 
+## Maintenance admission control
+
+`MAINTENANCE_STATE_FILE` points to the independent switch-control JSON state.
+When maintenance is active, new model discovery, direct generations, and
+background launches fail with HTTP 503. Health checks, existing job streams,
+status, cancellation, callbacks, and outbox delivery remain available so
+in-flight work can drain and settle. A missing state file is treated as open;
+an unreadable or malformed state fails closed.
+
 ## Calling From Existing Supabase Edge Functions
 
 Existing Edge Functions in the same Supabase project can read the project-wide

@@ -16,6 +16,7 @@ import { createEncryptedOutbox } from './outbox.js';
 import { createStreamTokenService } from './stream-token.js';
 import { ProviderHealthCache } from './provider-health.js';
 import { createAlertSink } from './alerts.js';
+import { assertAdmissionOpen, createMaintenanceStateReader } from './maintenance.js';
 
 const routePattern = /^\/v1beta\/models\/([^/]+):(generateContent|streamGenerateContent)$/;
 
@@ -84,7 +85,8 @@ async function handleGenerate({
   limiter,
   callbackClient,
   responseHeaders,
-  providerHealth
+  providerHealth,
+  readMaintenanceState
 }) {
   const match = routePattern.exec(url.pathname);
   if (!match) return false;
@@ -99,6 +101,7 @@ async function handleGenerate({
 
   const rawBody = await readRequestBody(req, config.maxRequestBytes);
   const jwtPayload = await verifyJwt(req, url, rawBody);
+  await assertAdmissionOpen(readMaintenanceState);
   const callbackContext = callbackContextFromJwt(jwtPayload, callbackClient.enabled);
   if (callbackContext) {
     responseHeaders['x-router-request-id'] = callbackContext.requestId;
@@ -234,16 +237,17 @@ export function buildModelCatalog(config, registry, providerHealth = null, claim
     }));
 }
 
-async function handleModels({ req, res, url, config, registry, verifyJwt, responseHeaders, providerHealth }) {
+async function handleModels({ req, res, url, config, registry, verifyJwt, responseHeaders, providerHealth, readMaintenanceState }) {
   if (req.method !== 'GET' || url.pathname !== '/v1beta/models') return false;
   const rawBody = Buffer.alloc(0);
   const claims = await verifyJwt(req, url, rawBody);
+  await assertAdmissionOpen(readMaintenanceState);
   const models = buildModelCatalog(config, registry, providerHealth, claims);
   sendJson(res, 200, { models }, responseHeaders);
   return true;
 }
 
-async function handleJobs({ req, res, url, config, verifyJwt, jobManager, responseHeaders }) {
+async function handleJobs({ req, res, url, config, verifyJwt, jobManager, responseHeaders, readMaintenanceState }) {
   if (!url.pathname.startsWith('/v1/jobs')) return false;
   if (!config.backgroundJobs.enabled || !jobManager) {
     throw new HttpError(503, 'UNAVAILABLE', 'Background Router jobs are disabled', {
@@ -254,6 +258,7 @@ async function handleJobs({ req, res, url, config, verifyJwt, jobManager, respon
   if (req.method === 'POST' && url.pathname === '/v1/jobs') {
     const rawBody = await readRequestBody(req, 64 * 1024);
     const claims = await verifyJwt(req, url, rawBody);
+    await assertAdmissionOpen(readMaintenanceState);
     const envelope = parseJson(rawBody);
     if (!clientAllowsModel(claims, envelope.model)) {
       throw new HttpError(403, 'PERMISSION_DENIED', 'Model is not allowed for this client', {
@@ -337,6 +342,7 @@ export async function main() {
   const limiter = new RunLimiter(config.maxConcurrentRuns);
   const corsPolicy = createCorsPolicy(config.cors);
   const callbackClient = createCallbackClient(config.callback);
+  const readMaintenanceState = createMaintenanceStateReader(config.maintenanceStateFile);
   let jobManager = null;
   if (config.backgroundJobs.enabled) {
     const claimClient = createClaimClient(config.backgroundJobs.claim);
@@ -372,9 +378,10 @@ export async function main() {
         verifyJwt,
         jobManager,
         providerHealth,
-        responseHeaders
+        responseHeaders,
+        readMaintenanceState
       })) return;
-      if (await handleModels({ req, res, url, config, registry, verifyJwt, responseHeaders, providerHealth })) return;
+      if (await handleModels({ req, res, url, config, registry, verifyJwt, responseHeaders, providerHealth, readMaintenanceState })) return;
       if (req.method === 'POST' && await handleGenerate({
         req,
         res,
@@ -385,7 +392,8 @@ export async function main() {
         limiter,
         callbackClient,
         providerHealth,
-        responseHeaders
+        responseHeaders,
+        readMaintenanceState
       })) return;
       throw new HttpError(404, 'NOT_FOUND', 'Route not found');
     } catch (error) {

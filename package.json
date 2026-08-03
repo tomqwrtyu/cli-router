@@ -16,7 +16,7 @@
     "deploy:edge": "bash scripts/deploy-edge-function.sh",
     "service:install": "bash scripts/install-systemd.sh",
     "test": "node test/index.js",
-    "check": "node --check src/server.js && node --check src/alerts.js && node --check src/auth.js && node --check src/attachments.js && node --check src/callback.js && node --check src/claim.js && node --check src/cli.js && node --check src/cors.js && node --check src/gemini.js && node --check src/job-manager.js && node --check src/outbox.js && node --check src/provider-health.js && node --check src/rate-limit.js && node --check src/stream-token.js && node --check src/config.js && node --check scripts/configure-background.js && node --check scripts/configure-trusted-client.js && node --check scripts/configure-callback.js && node --check scripts/sync-background-secrets.js && node --check scripts/sync-callback-secret.js && npm test",
+    "check": "node --check src/server.js && node --check src/alerts.js && node --check src/auth.js && node --check src/attachments.js && node --check src/callback.js && node --check src/claim.js && node --check src/cli.js && node --check src/cors.js && node --check src/gemini.js && node --check src/job-manager.js && node --check src/maintenance.js && node --check src/outbox.js && node --check src/provider-health.js && node --check src/rate-limit.js && node --check src/stream-token.js && node --check src/config.js && node --check scripts/configure-background.js && node --check scripts/configure-trusted-client.js && node --check scripts/configure-callback.js && node --check scripts/sync-background-secrets.js && node --check scripts/sync-callback-secret.js && npm test",
     "print-public-jwk": "node scripts/print-public-jwk.js"
   },
   "dependencies": {

@@ -207,6 +207,8 @@ export function loadConfig() {
     maxRequestBytes: intEnv('MAX_REQUEST_BYTES', 30 * 1024 * 1024),
     maxConcurrentRuns: intEnv('MAX_CONCURRENT_RUNS', 2),
     tmpDir: process.env.TMP_DIR || '/tmp/cli-router',
+    maintenanceStateFile: process.env.MAINTENANCE_STATE_FILE ||
+      '/var/lib/mirastral-switch-control/public-state.json',
     cors: {
       allowedOrigins: [...new Set([...configuredOrigins, ...trustedOrigins])],
       maxAgeSeconds: intEnv('CORS_MAX_AGE_SECONDS', 600)

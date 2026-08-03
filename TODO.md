@@ -26,6 +26,7 @@
 - [x] Calculate the 12-shichen rectification summary from the canonical owned chart in Edge.
 - [x] Test authenticated stream-token refresh and action-specific callback persistence.
 - [x] Verify the production Supabase-user `/models` path through Edge and the trusted-client Router registry. The warm request completed in 1.9 seconds.
+- [x] Reject new model discovery and launches during independent data-source maintenance while preserving in-flight stream, callback, and settlement paths.
 
 ## Attachment migration
 
