@@ -65,6 +65,78 @@ test('encrypted outbox stores no callback plaintext and removes delivered rows',
   }
 });
 
+test('outbox quarantines entries after the configured retry limit', async () => {
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), 'cli-router-outbox-limit-'));
+  let current = 1_000_000;
+  const outbox = createEncryptedOutbox({
+    rootDir,
+    encryptionKey: Buffer.alloc(32, 9).toString('base64'),
+    retentionMs: 60_000,
+    maxAttempts: 2,
+    maxRetryDelayMs: 5_000
+  }, 'project-one', { now: () => current });
+  try {
+    outbox.enqueue({ requestId, output: 'result' });
+    let item = outbox.due()[0];
+    const first = outbox.failed(item.id, item.attempts, new Error('temporary'));
+    assert.equal(first.exhausted, false);
+    current += 5_001;
+    item = outbox.due()[0];
+    const second = outbox.failed(item.id, item.attempts, new Error('persistent'));
+    assert.equal(second.exhausted, true);
+    assert.equal(outbox.due().length, 0);
+  } finally {
+    outbox.close();
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('outbox flush is single-flight and performs one callback attempt', async () => {
+  let releaseDelivery;
+  const deliveryGate = new Promise((resolve) => { releaseDelivery = resolve; });
+  let deliveries = 0;
+  let deliveryOptions;
+  const item = { id: requestId, event: { requestId }, attempts: 0 };
+  const manager = new JobManager({
+    config: {
+      backgroundJobs: {
+        projectId: 'project-one',
+        launchesPerMinute: 6,
+        outbox: { retryIntervalMs: 60_000 }
+      }
+    },
+    registry: {},
+    claimClient: {},
+    streamTokens: {},
+    callbackClient: {
+      deliver: async (_event, options) => {
+        deliveries += 1;
+        deliveryOptions = options;
+        await deliveryGate;
+      }
+    },
+    outbox: {
+      quarantineExhausted: () => 0,
+      purgeExpired: () => 0,
+      due: () => [item],
+      delivered: () => {},
+      failed: () => assert.fail('delivery should succeed'),
+      close: () => {}
+    }
+  });
+  try {
+    const first = manager.flushOutbox();
+    const second = manager.flushOutbox();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(deliveries, 1);
+    releaseDelivery();
+    await Promise.all([first, second]);
+    assert.deepEqual(deliveryOptions, { maxAttempts: 1 });
+  } finally {
+    manager.close();
+  }
+});
+
 test('job completes without a browser subscriber and callbacks the visible output', async () => {
   const runRoot = await mkdtemp(path.join(os.tmpdir(), 'cli-router-job-'));
   const fakeCodex = path.join(runRoot, 'fake-codex');

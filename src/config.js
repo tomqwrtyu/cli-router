@@ -243,7 +243,9 @@ export function loadConfig() {
         rootDir: process.env.ROUTER_OUTBOX_DIR || '/var/lib/cli-router/outbox',
         encryptionKey: outboxEncryptionKey,
         retentionMs: positiveIntEnv('ROUTER_OUTBOX_RETENTION_MS', 24 * 60 * 60_000),
-        retryIntervalMs: positiveIntEnv('ROUTER_OUTBOX_RETRY_INTERVAL_MS', 5_000)
+        retryIntervalMs: positiveIntEnv('ROUTER_OUTBOX_RETRY_INTERVAL_MS', 5_000),
+        maxAttempts: positiveIntEnv('ROUTER_OUTBOX_MAX_ATTEMPTS', 100),
+        maxRetryDelayMs: positiveIntEnv('ROUTER_OUTBOX_MAX_RETRY_DELAY_MS', 15 * 60_000)
       }
     },
     usage: {

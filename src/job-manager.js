@@ -106,6 +106,7 @@ export class JobManager {
     this.cancelledAt = new Map();
     this.clientLaunchEvents = new Map();
     this.usedStreamTokens = new Set();
+    this.outboxFlushPromise = null;
     this.launchLimiter = new RollingLaunchLimiter({
       limit: config.backgroundJobs.launchesPerMinute,
       now
@@ -469,6 +470,25 @@ export class JobManager {
   }
 
   async flushOutbox() {
+    if (this.outboxFlushPromise) return this.outboxFlushPromise;
+    const flush = this.flushOutboxOnce();
+    this.outboxFlushPromise = flush;
+    try {
+      return await flush;
+    } finally {
+      if (this.outboxFlushPromise === flush) this.outboxFlushPromise = null;
+    }
+  }
+
+  async flushOutboxOnce() {
+    const quarantined = this.outbox.quarantineExhausted?.() || 0;
+    if (quarantined > 0) {
+      console.error(`Router callback outbox entries exhausted count=${quarantined}`);
+      void this.alerts?.emit('callback_outbox_entries_exhausted', {
+        projectId: this.config.backgroundJobs.projectId,
+        count: quarantined
+      });
+    }
     const expired = this.outbox.purgeExpired();
     if (expired > 0) {
       console.error(`Router callback outbox entries expired count=${expired}`);
@@ -479,10 +499,19 @@ export class JobManager {
     }
     for (const item of this.outbox.due()) {
       try {
-        await this.callbackClient.deliver(item.event);
+        await this.callbackClient.deliver(item.event, { maxAttempts: 1 });
         this.outbox.delivered(item.id);
       } catch (error) {
-        this.outbox.failed(item.id, item.attempts, error);
+        const failure = this.outbox.failed(item.id, item.attempts, error);
+        if (failure?.exhausted) {
+          console.error(`Router callback outbox entry exhausted request_id=${item.id} attempts=${failure.attempts}`);
+          void this.alerts?.emit('callback_outbox_entry_exhausted', {
+            projectId: this.config.backgroundJobs.projectId,
+            requestId: item.id,
+            attempts: failure.attempts,
+            errorClass: error?.name || 'Error'
+          });
+        }
       }
     }
   }

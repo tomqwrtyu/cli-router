@@ -104,12 +104,13 @@ export function createCallbackClient(config, options = {}) {
   const wait = options.sleep || sleep;
   const enabled = Boolean(config.url && config.secret);
 
-  async function deliver(event) {
+  async function deliver(event, options = {}) {
     if (!enabled) return { delivered: false, disabled: true };
+    const maxAttempts = options.maxAttempts ?? config.maxAttempts;
     const rawBody = JSON.stringify(event);
     let lastError;
 
-    for (let attempt = 1; attempt <= config.maxAttempts; attempt += 1) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       const timestamp = String(Math.floor(now() / 1000));
       const signature = signCallbackBody(config.secret, timestamp, rawBody);
       try {
@@ -137,7 +138,7 @@ export function createCallbackClient(config, options = {}) {
         lastError = error;
       }
 
-      if (attempt < config.maxAttempts) {
+      if (attempt < maxAttempts) {
         await wait(250 * (2 ** (attempt - 1)));
       }
     }

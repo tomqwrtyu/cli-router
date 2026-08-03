@@ -27,6 +27,8 @@ function decryptJson(key, row) {
 
 export function createEncryptedOutbox(config, projectId, options = {}) {
   const now = options.now || Date.now;
+  const maxAttempts = config.maxAttempts ?? 100;
+  const maxRetryDelayMs = config.maxRetryDelayMs ?? 15 * 60_000;
   const key = decodeKey(config.encryptionKey);
   const projectDir = path.join(config.rootDir, projectId);
   fs.mkdirSync(projectDir, { recursive: true, mode: 0o700 });
@@ -60,7 +62,7 @@ export function createEncryptedOutbox(config, projectId, options = {}) {
   `);
   const selectDue = db.prepare(`
     select * from callback_outbox
-    where next_attempt_at <= ? and expires_at > ?
+    where next_attempt_at <= ? and expires_at > ? and attempts < ?
     order by created_at asc
     limit ?
   `);
@@ -69,9 +71,17 @@ export function createEncryptedOutbox(config, projectId, options = {}) {
   const fail = db.prepare(`
     update callback_outbox
     set attempts = attempts + 1,
-        next_attempt_at = @nextAttemptAt,
+        next_attempt_at = case
+          when attempts + 1 >= @maxAttempts then expires_at
+          else @nextAttemptAt
+        end,
         last_error_class = @errorClass
     where id = @id
+  `);
+  const quarantineExhausted = db.prepare(`
+    update callback_outbox
+    set next_attempt_at = expires_at
+    where attempts >= ? and next_attempt_at < expires_at
   `);
 
   return {
@@ -87,7 +97,7 @@ export function createEncryptedOutbox(config, projectId, options = {}) {
     },
     due(limit = 10) {
       const current = now();
-      return selectDue.all(current, current, limit).map((row) => ({
+      return selectDue.all(current, current, maxAttempts, limit).map((row) => ({
         id: row.id,
         event: decryptJson(key, row),
         attempts: row.attempts
@@ -97,12 +107,18 @@ export function createEncryptedOutbox(config, projectId, options = {}) {
       remove.run(id);
     },
     failed(id, attempts, error) {
-      const delay = Math.min(5 * 60_000, 5_000 * (2 ** Math.min(attempts, 6)));
-      fail.run({
+      const nextAttempts = attempts + 1;
+      const delay = Math.min(maxRetryDelayMs, 5_000 * (2 ** Math.min(attempts, 10)));
+      const result = fail.run({
         id,
         nextAttemptAt: now() + delay,
+        maxAttempts,
         errorClass: error?.name || 'Error'
       });
+      return { exhausted: nextAttempts >= maxAttempts, attempts: nextAttempts, changes: result.changes };
+    },
+    quarantineExhausted() {
+      return quarantineExhausted.run(maxAttempts).changes;
     },
     purgeExpired() {
       return expire.run(now()).changes;

@@ -119,6 +119,28 @@ test('callback client does not retry permanent 4xx responses', async () => {
   assert.equal(attempts, 1);
 });
 
+test('callback delivery can be limited to one attempt for durable outbox retries', async () => {
+  let attempts = 0;
+  const client = createCallbackClient({
+    url: 'https://example.com/router-callback',
+    secret: 's'.repeat(32),
+    timeoutMs: 1_000,
+    maxAttempts: 3
+  }, {
+    sleep: async () => assert.fail('single-attempt delivery must not sleep'),
+    fetchImpl: async () => {
+      attempts += 1;
+      return { ok: false, status: 503 };
+    }
+  });
+
+  await assert.rejects(
+    () => client.deliver({ requestId: context.requestId }, { maxAttempts: 1 }),
+    /HTTP 503/
+  );
+  assert.equal(attempts, 1);
+});
+
 test('failure callbacks omit provider stderr details', () => {
   const event = buildCallbackEvent({
     context,
