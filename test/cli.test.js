@@ -162,9 +162,30 @@ test('Codex streaming uses JSON events and forwards only agent messages', async 
       providerBinaries: { codex: 'codex' }
     }, { stream: true });
     assert.equal(command.args.includes('--json'), true);
+    assert.equal(command.args.includes('model_reasoning_effort="medium"'), true);
   } finally {
     await rm(runDir, { recursive: true, force: true });
   }
+});
+
+test('Codex command forwards xhigh reasoning effort from the model registry', () => {
+  const command = providerCommand({
+    prompt: 'prompt',
+    systemInstruction: '',
+    imagePaths: [],
+    runDir: os.tmpdir()
+  }, {
+    provider: 'codex',
+    cliModel: 'gpt-5.6-luna',
+    reasoningEffort: 'xhigh',
+    contextWindow: 1_050_000,
+    autoCompactTokenLimit: 800_000
+  }, {
+    providerBinaries: { codex: 'codex' },
+    codexLiveSearch: false
+  });
+
+  assert.equal(command.args.includes('model_reasoning_effort="xhigh"'), true);
 });
 
 test('Claude keeps a 200 KiB system instruction out of argv', async () => {

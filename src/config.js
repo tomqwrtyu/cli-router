@@ -48,6 +48,7 @@ function jsonEnv(name, fallback = null) {
 }
 
 const MODEL_VISIBILITIES = new Set(['default', 'restricted', 'admin']);
+const CODEX_REASONING_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh']);
 
 function normalizeTrustedClients(value) {
   if (value == null) return [];
@@ -285,8 +286,8 @@ export async function loadModelRegistry(config) {
     if (!entry.cliModel || typeof entry.cliModel !== 'string') {
       throw new Error(`Missing cliModel for ${modelId}`);
     }
-    if (entry.provider === 'codex' && entry.reasoningEffort !== 'medium') {
-      throw new Error(`Codex model ${modelId} must use medium reasoning effort`);
+    if (entry.provider === 'codex' && !CODEX_REASONING_EFFORTS.has(entry.reasoningEffort)) {
+      throw new Error(`Codex model ${modelId} has an invalid reasoning effort`);
     }
     for (const field of ['contextWindow', 'inputCharLimit', 'inputTokenLimit']) {
       if (!Number.isInteger(entry[field]) || entry[field] < 1) {

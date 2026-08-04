@@ -84,7 +84,7 @@
   "gpt-5.6-luna": {
     "provider": "codex",
     "cliModel": "gpt-5.6-luna",
-    "reasoningEffort": "medium",
+    "reasoningEffort": "xhigh",
     "contextWindow": 1050000,
     "inputCharLimit": 524288,
     "inputTokenLimit": 786432,
