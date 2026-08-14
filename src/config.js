@@ -47,6 +47,39 @@ function jsonEnv(name, fallback = null) {
   }
 }
 
+export function loadLocalApiConfig(env = process.env) {
+  const enabled = ['1', 'true', 'yes', 'on'].includes(
+    String(env.ROUTER_LOCAL_API_ENABLED || '').toLowerCase()
+  );
+  const host = env.ROUTER_LOCAL_API_HOST || '127.0.0.1';
+  const rawPort = env.ROUTER_LOCAL_API_PORT || '8788';
+  const port = Number.parseInt(rawPort, 10);
+  const token = env.ROUTER_LOCAL_API_TOKEN || '';
+  const clientId = env.ROUTER_LOCAL_API_CLIENT_ID || 'life';
+  const allowedModels = (env.ROUTER_LOCAL_ALLOWED_MODELS || '')
+    .split(',')
+    .map((model) => model.trim())
+    .filter(Boolean);
+
+  if (!enabled) return { enabled, host, port, token, clientId, allowedModels };
+  if (!['127.0.0.1', '::1'].includes(host)) {
+    throw new Error('ROUTER_LOCAL_API_HOST must be 127.0.0.1 or ::1');
+  }
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error('ROUTER_LOCAL_API_PORT must be an integer from 1 to 65535');
+  }
+  if (Buffer.byteLength(token) < 32) {
+    throw new Error('ROUTER_LOCAL_API_TOKEN must be at least 32 bytes');
+  }
+  if (!/^[A-Za-z0-9_-]{1,80}$/.test(clientId)) {
+    throw new Error('ROUTER_LOCAL_API_CLIENT_ID must contain only letters, numbers, underscores, and hyphens');
+  }
+  if (allowedModels.length === 0) {
+    throw new Error('ROUTER_LOCAL_ALLOWED_MODELS must contain at least one model ID');
+  }
+  return { enabled, host, port, token, clientId, allowedModels };
+}
+
 const MODEL_VISIBILITIES = new Set(['default', 'restricted', 'admin']);
 const CODEX_REASONING_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh']);
 
@@ -167,11 +200,17 @@ export function loadConfig() {
 
   const configuredOrigins = listEnv('CORS_ALLOWED_ORIGINS', []);
   const trustedOrigins = trustedClients.flatMap((client) => client.allowedOrigins);
+  const localApi = loadLocalApiConfig();
+  const publicHost = process.env.HOST || '127.0.0.1';
+  const publicPort = intEnv('PORT', 8787);
+  if (localApi.enabled && localApi.host === publicHost && localApi.port === publicPort) {
+    throw new Error('Local and public API listeners must use different addresses');
+  }
 
   return {
     env: process.env.NODE_ENV || 'development',
-    host: process.env.HOST || '127.0.0.1',
-    port: intEnv('PORT', 8787),
+    host: publicHost,
+    port: publicPort,
     authMode: process.env.ROUTER_AUTH_MODE || 'jwt',
     jwt: {
       alg: process.env.ROUTER_JWT_ALG || 'ES256',
@@ -182,6 +221,7 @@ export function loadConfig() {
       clockToleranceSeconds: intEnv('ROUTER_JWT_CLOCK_TOLERANCE_SECONDS', 5)
     },
     trustedClients,
+    localApi,
     providers: {
       claude: boolEnv('ENABLE_CLAUDE', true),
       codex: boolEnv('ENABLE_CODEX', true)
@@ -313,6 +353,13 @@ export async function loadModelRegistry(config) {
     const visibility = entry.access?.visibility;
     if (!MODEL_VISIBILITIES.has(visibility)) {
       throw new Error(`Invalid or missing access.visibility for ${modelId}`);
+    }
+  }
+  if (config.localApi?.enabled) {
+    for (const modelId of config.localApi.allowedModels) {
+      if (!registry[modelId]) {
+        throw new Error(`ROUTER_LOCAL_ALLOWED_MODELS contains unknown model ID: ${modelId}`);
+      }
     }
   }
   return registry;

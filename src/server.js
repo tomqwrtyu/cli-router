@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { loadConfig, loadModelRegistry } from './config.js';
-import { clientAllowsModel, createJwtVerifier } from './auth.js';
+import { clientAllowsModel, createJwtVerifier, createLocalTokenVerifier } from './auth.js';
 import { buildCallbackEvent, callbackContextFromJwt, createCallbackClient } from './callback.js';
 import { createClaimClient } from './claim.js';
 import { createCorsPolicy } from './cors.js';
@@ -213,8 +213,8 @@ async function handleGenerate({
   return true;
 }
 
-export function buildModelCatalog(config, registry, providerHealth = null, claims = null) {
-  return (config.backgroundJobs.enabled ? Object.entries(registry) : [])
+export function buildModelCatalog(config, registry, providerHealth = null, claims = null, direct = false) {
+  return (config.backgroundJobs.enabled || direct ? Object.entries(registry) : [])
     .filter(([modelId, entry]) => entry.enabled !== false && config.providers[entry.provider] &&
       clientAllowsModel(claims, modelId) &&
       (providerHealth?.status(entry.provider).available ?? true))
@@ -231,18 +231,18 @@ export function buildModelCatalog(config, registry, providerHealth = null, claim
       inputTokenLimit: entry.inputTokenLimit || null,
       outputTokenLimit: entry.outputTokenLimit || null,
       capabilities: {
-        backgroundJobs: config.backgroundJobs.enabled,
+        backgroundJobs: direct ? false : config.backgroundJobs.enabled,
         liveWebSearch: entry.provider === 'codex' && config.codexLiveSearch
       }
     }));
 }
 
-async function handleModels({ req, res, url, config, registry, verifyJwt, responseHeaders, providerHealth, readMaintenanceState }) {
+async function handleModels({ req, res, url, config, registry, verifyJwt, responseHeaders, providerHealth, readMaintenanceState, direct = false }) {
   if (req.method !== 'GET' || url.pathname !== '/v1beta/models') return false;
   const rawBody = Buffer.alloc(0);
   const claims = await verifyJwt(req, url, rawBody);
-  await assertAdmissionOpen(readMaintenanceState);
-  const models = buildModelCatalog(config, registry, providerHealth, claims);
+  if (readMaintenanceState) await assertAdmissionOpen(readMaintenanceState);
+  const models = buildModelCatalog(config, registry, providerHealth, claims, direct);
   sendJson(res, 200, { models }, responseHeaders);
   return true;
 }
@@ -324,6 +324,80 @@ function handleHealth(req, res, url, responseHeaders) {
   return false;
 }
 
+export function createRequestHandler({
+  config,
+  registry,
+  verifyJwt,
+  limiter,
+  callbackClient,
+  providerHealth,
+  readMaintenanceState = null,
+  jobManager = null,
+  corsPolicy = null,
+  allowJobs = false,
+  directCatalog = false
+}) {
+  return async (req, res) => {
+    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    let responseHeaders = {};
+    try {
+      if (corsPolicy) {
+        responseHeaders = corsPolicy.headersForRequest(req);
+        if (corsPolicy.handlePreflight(req, res, responseHeaders)) return;
+      }
+      if (handleHealth(req, res, url, responseHeaders)) return;
+      if (allowJobs && await handleJobs({
+        req,
+        res,
+        url,
+        config,
+        verifyJwt,
+        jobManager,
+        providerHealth,
+        responseHeaders,
+        readMaintenanceState
+      })) return;
+      if (await handleModels({
+        req,
+        res,
+        url,
+        config,
+        registry,
+        verifyJwt,
+        responseHeaders,
+        providerHealth,
+        readMaintenanceState,
+        direct: directCatalog
+      })) return;
+      if (req.method === 'POST' && await handleGenerate({
+        req,
+        res,
+        url,
+        config,
+        registry,
+        verifyJwt,
+        limiter,
+        callbackClient,
+        providerHealth,
+        responseHeaders,
+        readMaintenanceState: readMaintenanceState || (async () => ({ maintenance: false }))
+      })) return;
+      throw new HttpError(404, 'NOT_FOUND', 'Route not found');
+    } catch (error) {
+      const { statusCode, body } = geminiError(error);
+      if (error?.details?.retryAfter) {
+        responseHeaders['retry-after'] = String(error.details.retryAfter);
+      }
+      if (!res.headersSent) {
+        sendJson(res, statusCode, body, responseHeaders);
+      } else {
+        writeSseData(res, body);
+        res.end();
+      }
+    }
+  };
+}
+
 export async function main() {
   const config = loadConfig();
   await fs.mkdir(config.tmpDir, { recursive: true });
@@ -363,58 +437,42 @@ export async function main() {
     });
   }
 
-  const server = http.createServer(async (req, res) => {
-    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
-    let responseHeaders = {};
-    try {
-      responseHeaders = corsPolicy.headersForRequest(req);
-      if (corsPolicy.handlePreflight(req, res, responseHeaders)) return;
-      if (handleHealth(req, res, url, responseHeaders)) return;
-      if (await handleJobs({
-        req,
-        res,
-        url,
-        config,
-        verifyJwt,
-        jobManager,
-        providerHealth,
-        responseHeaders,
-        readMaintenanceState
-      })) return;
-      if (await handleModels({ req, res, url, config, registry, verifyJwt, responseHeaders, providerHealth, readMaintenanceState })) return;
-      if (req.method === 'POST' && await handleGenerate({
-        req,
-        res,
-        url,
-        config,
-        registry,
-        verifyJwt,
-        limiter,
-        callbackClient,
-        providerHealth,
-        responseHeaders,
-        readMaintenanceState
-      })) return;
-      throw new HttpError(404, 'NOT_FOUND', 'Route not found');
-    } catch (error) {
-      const { statusCode, body } = geminiError(error);
-      if (error?.details?.retryAfter) {
-        responseHeaders['retry-after'] = String(error.details.retryAfter);
-      }
-      if (!res.headersSent) {
-        sendJson(res, statusCode, body, responseHeaders);
-      } else {
-        writeSseData(res, body);
-        res.end();
-      }
-    }
-  });
+  const server = http.createServer(createRequestHandler({
+    config,
+    registry,
+    verifyJwt,
+    limiter,
+    callbackClient,
+    providerHealth,
+    readMaintenanceState,
+    jobManager,
+    corsPolicy,
+    allowJobs: true
+  }));
+
+  let localServer = null;
+  if (config.localApi.enabled) {
+    const verifyLocalToken = createLocalTokenVerifier(config.localApi);
+    localServer = http.createServer(createRequestHandler({
+      config,
+      registry,
+      verifyJwt: verifyLocalToken,
+      limiter,
+      callbackClient,
+      providerHealth,
+      directCatalog: true
+    }));
+    localServer.listen(config.localApi.port, config.localApi.host, () => {
+      console.log(`cli-router local API listening on http://${config.localApi.host}:${config.localApi.port}`);
+    });
+  }
 
   server.listen(config.port, config.host, () => {
     console.log(`cli-router listening on http://${config.host}:${config.port}`);
   });
   const shutdown = () => {
     jobManager?.close();
+    localServer?.close();
     server.close();
   };
   process.once('SIGTERM', shutdown);

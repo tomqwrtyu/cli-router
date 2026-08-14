@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
-import { clientAllowsModel, createJwtVerifier, sha256Hex } from '../src/auth.js';
+import { clientAllowsModel, createJwtVerifier, createLocalTokenVerifier, sha256Hex } from '../src/auth.js';
 
 async function fixture() {
   const { publicKey, privateKey } = await generateKeyPair('ES256');
@@ -58,6 +58,41 @@ test('trusted-client verifier rejects a client claim mismatch', async () => {
   const verify = await createJwtVerifier(config);
   await assert.rejects(
     () => verify({ method: 'POST', headers: { authorization: `Bearer ${token}` } }, new URL('https://router.example.test/v1/jobs'), body),
+    (error) => error.statusCode === 401
+  );
+});
+
+test('local verifier requires loopback, no browser origin, and the exact token', async () => {
+  const verify = createLocalTokenVerifier({
+    enabled: true,
+    token: 'a'.repeat(32),
+    clientId: 'life',
+    allowedModels: ['gpt-5.6-luna']
+  });
+  const request = (overrides = {}) => ({
+    headers: { authorization: `Bearer ${'a'.repeat(32)}` },
+    socket: { remoteAddress: '127.0.0.1' },
+    ...overrides
+  });
+
+  const claims = await verify(request());
+  assert.equal(claims.localApi, true);
+  assert.equal(clientAllowsModel(claims, 'gpt-5.6-luna'), true);
+  assert.equal(clientAllowsModel(claims, 'gpt-5.6-sol'), false);
+
+  await assert.rejects(
+    () => verify(request({ socket: { remoteAddress: '10.0.0.2' } })),
+    (error) => error.statusCode === 403 && error.details.reason === 'local_client_not_loopback'
+  );
+  await assert.rejects(
+    () => verify(request({ headers: {
+      authorization: `Bearer ${'a'.repeat(32)}`,
+      origin: 'https://example.test'
+    } })),
+    (error) => error.statusCode === 403 && error.details.reason === 'local_browser_origin_denied'
+  );
+  await assert.rejects(
+    () => verify(request({ headers: { authorization: `Bearer ${'b'.repeat(32)}` } })),
     (error) => error.statusCode === 401
   );
 });

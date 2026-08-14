@@ -37,3 +37,26 @@ test('model catalog intersects enabled models with trusted-client policy', () =>
   });
   assert.equal(allowed.length, 1);
 });
+
+test('direct local catalog remains available without background jobs', () => {
+  const config = {
+    providers: { codex: true },
+    codexLiveSearch: true,
+    backgroundJobs: { enabled: false }
+  };
+  const claims = { routerClient: { allowedModels: ['gpt-test'] } };
+  const models = buildModelCatalog(config, registry, null, claims, true);
+  assert.equal(models.length, 1);
+  assert.equal(models[0].capabilities.backgroundJobs, false);
+});
+
+test('direct local catalog never advertises public background jobs', () => {
+  const config = {
+    providers: { codex: true },
+    codexLiveSearch: true,
+    backgroundJobs: { enabled: true }
+  };
+  const claims = { routerClient: { allowedModels: ['gpt-test'] } };
+  const models = buildModelCatalog(config, registry, null, claims, true);
+  assert.equal(models[0].capabilities.backgroundJobs, false);
+});

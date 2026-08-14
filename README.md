@@ -18,6 +18,10 @@ Frontend
 
 Do not forward the user's Supabase session token to this router. The router JWT is a separate service-to-service token with a 60 second lifetime, `jti` replay protection, and a `body_sha256` claim bound to the exact request body.
 
+Services running on the same host may instead use the optional loopback API.
+That listener has a separate bearer credential and model allowlist; it does not
+weaken or bypass authentication on the public listener.
+
 The accepted background generation, billing, private-payload, streaming, and recovery contract is defined in [docs/background-generation-architecture.md](docs/background-generation-architecture.md).
 
 ## Setup
@@ -117,6 +121,36 @@ is false, `/v1/jobs` rejects launches and `/v1beta/models` returns no Router mod
 so the Supabase user-policy intersection fails closed.
 
 Requests from Edge Functions without an `Origin` header are unaffected by the browser CORS allowlist. The callback URL and secret must either both be configured or both be empty.
+
+## Loopback API
+
+Configure a local client and generate its credential without printing it:
+
+```bash
+npm run configure:local-api -- life gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna 8788
+```
+
+The main process then serves the same Gemini-shaped model and generation paths
+on `http://127.0.0.1:8788`. The generated credential is stored at
+`secrets/local-api-life.token`; the local service sends it as a bearer token.
+
+```bash
+curl -H "Authorization: Bearer $(<secrets/local-api-life.token)" \
+  http://127.0.0.1:8788/v1beta/models
+```
+
+The local listener:
+
+- can bind only to `127.0.0.1` or `::1`;
+- rejects requests carrying a browser `Origin` header;
+- exposes `/health`, `/v1beta/models`, and direct generate/stream-generate;
+- does not expose `/v1/jobs` or use Mirastral callbacks and billing claims;
+- is independent of Mirastral's data-plane maintenance gate;
+- shares the public process's provider health and global CLI concurrency limit.
+
+Do not add port `8788` to Caddy/Nginx, a tunnel, Docker published ports, or a
+cloud firewall rule. Keep the token file mode `0600` and rotate the token if a
+local service or host account is compromised.
 
 ## Endpoints
 

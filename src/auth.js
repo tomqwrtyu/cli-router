@@ -14,6 +14,47 @@ export function sha256Hex(buffer) {
   return crypto.createHash('sha256').update(buffer).digest('hex');
 }
 
+function tokenMatches(actual, expected) {
+  const actualDigest = crypto.createHash('sha256').update(actual).digest();
+  const expectedDigest = crypto.createHash('sha256').update(expected).digest();
+  return crypto.timingSafeEqual(actualDigest, expectedDigest);
+}
+
+function isLoopbackAddress(address) {
+  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
+}
+
+export function createLocalTokenVerifier(config) {
+  if (!config?.enabled) throw new Error('Local API is not enabled');
+
+  return async function verifyLocalToken(req) {
+    if (!isLoopbackAddress(req.socket?.remoteAddress)) {
+      throw new HttpError(403, 'PERMISSION_DENIED', 'Local API accepts loopback clients only', {
+        reason: 'local_client_not_loopback'
+      });
+    }
+    if (req.headers.origin) {
+      throw new HttpError(403, 'PERMISSION_DENIED', 'Browser origins are not accepted by the local API', {
+        reason: 'local_browser_origin_denied'
+      });
+    }
+    const match = /^Bearer\s+(.+)$/i.exec(req.headers.authorization || '');
+    if (!match || !tokenMatches(match[1], config.token)) {
+      throw new HttpError(401, 'UNAUTHENTICATED', 'Invalid local API token');
+    }
+
+    return {
+      sub: `local:${config.clientId}`,
+      localApi: true,
+      routerClient: {
+        clientId: config.clientId,
+        allowedModels: config.allowedModels,
+        allowedOrigins: []
+      }
+    };
+  };
+}
+
 export async function createJwtVerifier(config) {
   if (config.authMode === 'disabled') {
     if (config.env === 'production') {
