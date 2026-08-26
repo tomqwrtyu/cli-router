@@ -66,3 +66,34 @@ test('Gemini normalization materializes the system instruction in the run direct
     await rm(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('Gemini normalization accepts an explicit router web-search preference', async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'cli-router-test-'));
+  let normalized;
+  try {
+    normalized = await normalizeGeminiRequest({
+      routerConfig: { webSearchEnabled: false },
+      contents: [{ role: 'user', parts: [{ text: 'Extract this document' }] }]
+    }, { tmpDir }, { provider: 'codex', supportsImages: true });
+
+    assert.equal(normalized.webSearchEnabled, false);
+  } finally {
+    if (normalized?.runDir) await rm(normalized.runDir, { recursive: true, force: true });
+    await rm(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('Gemini normalization rejects a non-boolean router web-search preference', async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'cli-router-test-'));
+  try {
+    await assert.rejects(
+      normalizeGeminiRequest({
+        routerConfig: { webSearchEnabled: 'false' },
+        contents: [{ role: 'user', parts: [{ text: 'Extract this document' }] }]
+      }, { tmpDir }, { provider: 'codex', supportsImages: true }),
+      (error) => error.statusCode === 400 && error.details.reason === 'invalid_router_config'
+    );
+  } finally {
+    await rm(tmpDir, { recursive: true, force: true });
+  }
+});

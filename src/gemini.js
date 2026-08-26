@@ -198,6 +198,14 @@ export async function normalizeGeminiRequest(body, config, modelEntry) {
     throw new HttpError(400, 'INVALID_ARGUMENT', 'contents must be a non-empty array');
   }
 
+  const routerConfig = body.routerConfig || body.router_config;
+  const requestedWebSearch = routerConfig?.webSearchEnabled ?? routerConfig?.web_search_enabled;
+  if (requestedWebSearch !== undefined && typeof requestedWebSearch !== 'boolean') {
+    throw new HttpError(400, 'INVALID_ARGUMENT', 'routerConfig.webSearchEnabled must be a boolean', {
+      reason: 'invalid_router_config'
+    });
+  }
+
   const runId = crypto.randomUUID();
   const runDir = await fs.mkdtemp(path.join(config.tmpDir || os.tmpdir(), `${runId}-`));
   const systemInstruction = collectTextParts(body.systemInstruction);
@@ -266,6 +274,7 @@ export async function normalizeGeminiRequest(body, config, modelEntry) {
       prompt,
       imagePaths,
       images,
+      webSearchEnabled: requestedWebSearch,
       generationConfig
     };
   } catch (error) {

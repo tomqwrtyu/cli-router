@@ -145,6 +145,8 @@ The local listener:
 - rejects requests carrying a browser `Origin` header;
 - exposes `/health`, `/v1beta/models`, and direct generate/stream-generate;
 - does not expose `/v1/jobs` or use Mirastral callbacks and billing claims;
+- disables Codex live search by default; local requests may opt in with
+  `routerConfig.webSearchEnabled=true` when the server-wide switch is enabled;
 - is independent of Mirastral's data-plane maintenance gate;
 - shares the public process's provider health and global CLI concurrency limit.
 
@@ -217,6 +219,7 @@ Supported request subset:
 - `contents[].parts[].file_data` / `fileData`
 - `systemInstruction.parts[].text`
 - `generationConfig` is accepted but only partially used by providers today
+- `routerConfig.webSearchEnabled` controls Codex live search when the server allows it
 
 Unsupported in v1:
 

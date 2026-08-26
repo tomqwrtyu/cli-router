@@ -118,6 +118,10 @@ async function handleGenerate({
     limiter.enter();
     limiterEntered = true;
     normalized = await normalizeGeminiRequest(parseJson(rawBody), config, modelEntry);
+    // Local batch clients should not inherit Mirastral's globally enabled live search.
+    if (jwtPayload.localApi && normalized.webSearchEnabled === undefined) {
+      normalized.webSearchEnabled = false;
+    }
     assertPromptWithinModelLimits(normalized, modelEntry, config);
     const runConfig = callbackContext
       ? { ...config, runTimeoutMs: config.memoryRunTimeoutMs }
