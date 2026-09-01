@@ -81,7 +81,7 @@ export function loadLocalApiConfig(env = process.env) {
 }
 
 const MODEL_VISIBILITIES = new Set(['default', 'restricted', 'admin']);
-const CODEX_REASONING_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh']);
+const CODEX_REASONING_EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 
 function normalizeTrustedClients(value) {
   if (value == null) return [];

@@ -62,7 +62,7 @@
   "gpt-5.6-terra": {
     "provider": "codex",
     "cliModel": "gpt-5.6-terra",
-    "reasoningEffort": "medium",
+    "reasoningEffort": "high",
     "contextWindow": 1050000,
     "inputCharLimit": 524288,
     "inputTokenLimit": 786432,
@@ -84,7 +84,7 @@
   "gpt-5.6-luna": {
     "provider": "codex",
     "cliModel": "gpt-5.6-luna",
-    "reasoningEffort": "xhigh",
+    "reasoningEffort": "max",
     "contextWindow": 1050000,
     "inputCharLimit": 524288,
     "inputTokenLimit": 786432,

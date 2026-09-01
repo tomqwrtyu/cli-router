@@ -168,7 +168,7 @@ test('Codex streaming uses JSON events and forwards only agent messages', async 
   }
 });
 
-test('Codex command forwards xhigh reasoning effort from the model registry', () => {
+test('Codex command forwards max reasoning effort from the model registry', () => {
   const command = providerCommand({
     prompt: 'prompt',
     systemInstruction: '',
@@ -177,7 +177,7 @@ test('Codex command forwards xhigh reasoning effort from the model registry', ()
   }, {
     provider: 'codex',
     cliModel: 'gpt-5.6-luna',
-    reasoningEffort: 'xhigh',
+    reasoningEffort: 'max',
     contextWindow: 1_050_000,
     autoCompactTokenLimit: 800_000
   }, {
@@ -185,7 +185,7 @@ test('Codex command forwards xhigh reasoning effort from the model registry', ()
     codexLiveSearch: false
   });
 
-  assert.equal(command.args.includes('model_reasoning_effort="xhigh"'), true);
+  assert.equal(command.args.includes('model_reasoning_effort="max"'), true);
 });
 
 test('Claude keeps a 200 KiB system instruction out of argv', async () => {

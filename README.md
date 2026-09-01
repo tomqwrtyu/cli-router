@@ -291,8 +291,8 @@ The result is an intersection. For example, a user may have admin access with
 
 The default visible models are currently `gpt-5.6-sol`, `gpt-5.6-terra`, and
 `gpt-5.6-luna`. Codex calls pin `model_reasoning_effort` per registry entry,
-independent of the host user's global Codex configuration. Sol and Terra use
-`medium`; Luna uses `xhigh`.
+independent of the host user's global Codex configuration. Sol uses `medium`,
+Terra uses `high`, and Luna uses `max`.
 
 `profiles.allowed_router_models` is now an override list, not the full model
 list for normal users. It accepts router model IDs without the `models/` prefix:

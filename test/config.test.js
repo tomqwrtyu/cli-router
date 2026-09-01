@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadLocalApiConfig, loadModelRegistry } from '../src/config.js';
 
-test('model registry configures Luna with xhigh reasoning only', async () => {
+test('model registry configures per-model reasoning effort', async () => {
   const registry = await loadModelRegistry({ modelRegistryPath: './config/models.json' });
 
-  assert.equal(registry['gpt-5.6-luna'].reasoningEffort, 'xhigh');
+  assert.equal(registry['gpt-5.6-luna'].reasoningEffort, 'max');
   assert.equal(registry['gpt-5.6-sol'].reasoningEffort, 'medium');
-  assert.equal(registry['gpt-5.6-terra'].reasoningEffort, 'medium');
+  assert.equal(registry['gpt-5.6-terra'].reasoningEffort, 'high');
 });
 
 test('model registry rejects unknown local allowlist entries', async () => {
