@@ -84,6 +84,8 @@ function corsHeaders(origin: string | null): HeadersInit {
     ...(allowedOrigin ? { 'access-control-allow-origin': allowedOrigin } : {}),
     'access-control-allow-headers': 'authorization, x-client-info, apikey, content-type',
     'access-control-allow-methods': 'POST, GET, OPTIONS',
+    'access-control-max-age': '600',
+    'x-content-type-options': 'nosniff',
     vary: 'origin'
   }
 }

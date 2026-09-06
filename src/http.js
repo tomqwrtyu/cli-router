@@ -1,4 +1,5 @@
 import { HttpError } from './errors.js';
+import { withSecurityHeaders } from './response-headers.js';
 
 export async function readRequestBody(req, maxBytes) {
   const chunks = [];
@@ -19,6 +20,7 @@ export async function readRequestBody(req, maxBytes) {
 export function sendJson(res, statusCode, body, headers = {}) {
   const raw = JSON.stringify(body);
   res.writeHead(statusCode, {
+    ...withSecurityHeaders(),
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(raw),
     ...headers
@@ -28,6 +30,7 @@ export function sendJson(res, statusCode, body, headers = {}) {
 
 export function sendSseHeaders(res, headers = {}) {
   res.writeHead(200, {
+    ...withSecurityHeaders(),
     'content-type': 'text/event-stream; charset=utf-8',
     'cache-control': 'no-cache, no-transform',
     connection: 'keep-alive',

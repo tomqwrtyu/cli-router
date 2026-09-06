@@ -7,6 +7,7 @@ import './cli.test.js';
 import './cors.test.js';
 import './config.test.js';
 import './gemini.test.js';
+import './http.test.js';
 import './jobs.test.js';
 import './maintenance.test.js';
 import './provider-health.test.js';

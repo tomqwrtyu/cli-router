@@ -56,6 +56,9 @@ test('CORS handles an allowed JSON authorization preflight', () => {
   assert.equal(res.headers['access-control-allow-origin'], 'https://www.example.com');
   assert.equal(res.headers['access-control-allow-methods'], 'GET, POST');
   assert.equal(res.headers['access-control-allow-headers'], 'authorization, content-type');
+  assert.equal(res.headers['access-control-max-age'], '600');
+  assert.equal(res.headers['strict-transport-security'], 'max-age=31536000');
+  assert.equal(res.headers['x-content-type-options'], 'nosniff');
   assert.equal(res.ended, true);
 });
 

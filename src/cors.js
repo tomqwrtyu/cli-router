@@ -1,4 +1,5 @@
 import { HttpError } from './errors.js';
+import { withSecurityHeaders } from './response-headers.js';
 
 const ALLOWED_METHODS = new Set(['GET', 'POST']);
 const ALLOWED_HEADERS = new Set(['authorization', 'content-type']);
@@ -54,12 +55,12 @@ export function createCorsPolicy(config) {
       });
     }
 
-    res.writeHead(204, {
+    res.writeHead(204, withSecurityHeaders({
       ...responseHeaders,
       'access-control-allow-methods': [...ALLOWED_METHODS].join(', '),
       'access-control-allow-headers': [...ALLOWED_HEADERS].join(', '),
       'access-control-max-age': String(config.maxAgeSeconds)
-    });
+    }));
     res.end();
     return true;
   }
