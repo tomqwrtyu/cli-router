@@ -301,8 +301,9 @@ Edge verifies bucket, ownership, path, declared type, magic bytes, and size. Lim
 
 For Router, Edge places short-lived signed URLs in the private claimed payload.
 Router permits only the configured Supabase hostname, rejects redirects, streams with
-hard size limits, and verifies content. Claude requests reject unsupported images at
-prepare. Gemini and BYOK download the same private objects through Edge.
+hard size limits, and verifies content. Claude images are passed to the CLI through
+JSONL stdin as verified base64 image blocks; image bytes never enter process arguments,
+callbacks, or logs. Gemini and BYOK download the same private objects through Edge.
 
 Referenced attachments remain until their message is deleted. Unreferenced uploads
 are removed after 24 hours. Related attachments cannot be deleted while a generation

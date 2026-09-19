@@ -8,6 +8,10 @@ test('model registry configures per-model reasoning effort', async () => {
   assert.equal(registry['gpt-5.6-luna'].reasoningEffort, 'max');
   assert.equal(registry['gpt-5.6-sol'].reasoningEffort, 'medium');
   assert.equal(registry['gpt-5.6-terra'].reasoningEffort, 'high');
+  for (const modelId of ['claude-sonnet-latest', 'claude-opus-latest']) {
+    assert.equal(registry[modelId].supportsImages, true);
+    assert.equal(registry[modelId].access.visibility, 'default');
+  }
 });
 
 test('model registry rejects unknown local allowlist entries', async () => {

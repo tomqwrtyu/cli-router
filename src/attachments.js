@@ -317,7 +317,15 @@ export async function materializePart(part, { config, runDir, modelEntry }) {
       });
     }
     const filePath = await writeAttachment(runDir, name, mimeType, buffer);
-    return { kind: 'image', path: filePath, mimeType, name, byteLength: buffer.length, dimensions: imageDimensions(mimeType, buffer) };
+    return {
+      kind: 'image',
+      path: filePath,
+      mimeType,
+      name,
+      byteLength: buffer.length,
+      dimensions: imageDimensions(mimeType, buffer),
+      base64Data: buffer.toString('base64')
+    };
   }
 
   const extracted = await textFromBuffer(mimeType, buffer, config);

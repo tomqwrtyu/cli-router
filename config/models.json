@@ -6,9 +6,9 @@
     "inputCharLimit": 524288,
     "inputTokenLimit": 786432,
     "enabled": true,
-    "supportsImages": false,
+    "supportsImages": true,
     "access": {
-      "visibility": "restricted"
+      "visibility": "default"
     },
     "billing": {
       "unit": "credits_per_1m_tokens",
@@ -25,9 +25,9 @@
     "inputCharLimit": 524288,
     "inputTokenLimit": 786432,
     "enabled": true,
-    "supportsImages": false,
+    "supportsImages": true,
     "access": {
-      "visibility": "admin"
+      "visibility": "default"
     },
     "billing": {
       "unit": "credits_per_1m_tokens",

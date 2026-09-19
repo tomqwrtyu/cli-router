@@ -243,7 +243,8 @@ export async function normalizeGeminiRequest(body, config, modelEntry) {
               mimeType: materialized.mimeType,
               name: materialized.name,
               byteLength: materialized.byteLength,
-              dimensions: materialized.dimensions
+              dimensions: materialized.dimensions,
+              base64Data: materialized.base64Data
             });
             roleBlocks.push(`[Attached image: ${materialized.name} (${materialized.mimeType})]`);
           } else if (materialized.kind === 'text') {

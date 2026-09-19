@@ -4,14 +4,73 @@ import { StringDecoder } from 'node:string_decoder';
 import { HttpError } from './errors.js';
 import { quotaErrorDetails } from './provider-health.js';
 
+export function claudeStreamInput(normalized) {
+  const imageParts = (normalized.images || []).map((image) => {
+    if (!image.base64Data || !image.mimeType) {
+      throw new HttpError(500, 'INTERNAL', 'Materialized Claude image is missing', {
+        reason: 'claude_image_materialization_missing',
+        provider: 'claude'
+      });
+    }
+    return {
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: image.mimeType,
+        data: image.base64Data
+      }
+    };
+  });
+  return `${JSON.stringify({
+    type: 'user',
+    message: {
+      role: 'user',
+      content: [
+        ...imageParts,
+        { type: 'text', text: normalized.prompt || '' }
+      ]
+    }
+  })}\n`;
+}
+
+function claudeJsonResult(output) {
+  let result = '';
+  let error = '';
+  const assistantText = [];
+  for (const line of output.split('\n')) {
+    if (!line.trim()) continue;
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
+      for (const part of event.message.content) {
+        if (part?.type === 'text' && typeof part.text === 'string') assistantText.push(part.text);
+      }
+    }
+    if (event.type === 'error' || (event.type === 'result' && event.is_error)) {
+      error = event.error?.message || event.result || JSON.stringify(event);
+    }
+    if (event.type === 'result' && !event.is_error && typeof event.result === 'string') {
+      result = event.result;
+    }
+  }
+  return { text: result || assistantText.join(''), error };
+}
+
 export function providerCommand(normalized, modelEntry, config, options = {}) {
   if (modelEntry.provider === 'claude') {
-    const outputFormat = options.stream ? 'stream-json' : 'text';
+    const hasImages = Array.isArray(normalized.images) && normalized.images.length > 0;
+    const outputFormat = options.stream || hasImages ? 'stream-json' : 'text';
     const args = [
       '-p',
       '--output-format',
       outputFormat,
       ...(options.stream ? ['--include-partial-messages', '--verbose'] : []),
+      ...(!options.stream && hasImages ? ['--verbose'] : []),
+      ...(hasImages ? ['--input-format', 'stream-json'] : []),
       '--safe-mode',
       '--no-session-persistence',
       '--disable-slash-commands',
@@ -31,7 +90,12 @@ export function providerCommand(normalized, modelEntry, config, options = {}) {
       }
       args.push('--system-prompt-file', normalized.systemInstructionPath);
     }
-    return { command: config.providerBinaries.claude, args, stdin: normalized.prompt };
+    return {
+      command: config.providerBinaries.claude,
+      args,
+      stdin: hasImages ? claudeStreamInput(normalized) : normalized.prompt,
+      claudeJsonOutput: hasImages
+    };
   }
 
   if (modelEntry.provider === 'codex') {
@@ -148,7 +212,7 @@ function terminateProcessGroup(child, signal) {
 }
 
 export function runCliOnce(normalized, modelEntry, config) {
-  const { command, args, stdin } = providerCommand(normalized, modelEntry, config);
+  const { command, args, stdin, claudeJsonOutput } = providerCommand(normalized, modelEntry, config);
   const hasStdin = stdin !== undefined;
 
   return new Promise((resolve, reject) => {
@@ -202,6 +266,19 @@ export function runCliOnce(normalized, modelEntry, config) {
       const err = Buffer.concat(stderr).toString('utf8');
       if (code !== 0) {
         reject(normalizeProviderError(modelEntry.provider, `${err}\n${text}`.trim(), code, config));
+        return;
+      }
+      if (claudeJsonOutput) {
+        const parsed = claudeJsonResult(text);
+        if (parsed.error) {
+          reject(normalizeProviderError(modelEntry.provider, parsed.error, code, config));
+          return;
+        }
+        if (!parsed.text.trim()) {
+          reject(emptyProviderError(modelEntry.provider, `${err}\n${text}`.trim(), config));
+          return;
+        }
+        resolve(parsed.text.trim());
         return;
       }
       if (!text.trim() && err.trim()) {

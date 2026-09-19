@@ -34,6 +34,87 @@ test('Claude sends large prompts through stdin instead of argv', async () => {
   );
 });
 
+test('Claude image requests use verified base64 blocks through stream-json stdin', () => {
+  const normalized = {
+    prompt: 'Describe the image',
+    systemInstruction: '',
+    systemInstructionPath: null,
+    imagePaths: ['/tmp/private-image.png'],
+    images: [{
+      path: '/tmp/private-image.png',
+      mimeType: 'image/png',
+      base64Data: 'aW1hZ2UtYnl0ZXM='
+    }],
+    runDir: os.tmpdir()
+  };
+  const command = providerCommand(normalized, claudeEntry, {
+    providerBinaries: { claude: 'claude' }
+  });
+  const input = JSON.parse(command.stdin.trim());
+
+  assert.deepEqual(
+    command.args.slice(command.args.indexOf('--input-format'), command.args.indexOf('--input-format') + 2),
+    ['--input-format', 'stream-json']
+  );
+  assert.equal(command.args[command.args.indexOf('--output-format') + 1], 'stream-json');
+  assert.equal(command.args.includes('aW1hZ2UtYnl0ZXM='), false);
+  assert.equal(input.type, 'user');
+  assert.deepEqual(input.message.content[0], {
+    type: 'image',
+    source: {
+      type: 'base64',
+      media_type: 'image/png',
+      data: 'aW1hZ2UtYnl0ZXM='
+    }
+  });
+  assert.deepEqual(input.message.content[1], { type: 'text', text: 'Describe the image' });
+});
+
+test('Claude image requests fail closed when verified bytes are missing', () => {
+  assert.throws(
+    () => providerCommand({
+      prompt: 'Describe the image',
+      images: [{ mimeType: 'image/png' }],
+      runDir: os.tmpdir()
+    }, claudeEntry, {
+      providerBinaries: { claude: 'claude' }
+    }),
+    (error) => error.statusCode === 500 &&
+      error.details.reason === 'claude_image_materialization_missing'
+  );
+});
+
+test('Claude non-streaming image requests extract the final stream-json result', async () => {
+  const runDir = await mkdtemp(path.join(os.tmpdir(), 'cli-router-claude-image-'));
+  const fakeClaude = path.join(runDir, 'fake-claude');
+
+  try {
+    await writeFile(fakeClaude, [
+      '#!/bin/sh',
+      'cat >/dev/null',
+      `printf '%s\\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"duplicate"}]}}'`,
+      `printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"result":"IMAGE_OK"}'`
+    ].join('\n'));
+    await chmod(fakeClaude, 0o700);
+
+    const result = await runCliOnce({
+      prompt: 'Describe the image',
+      systemInstruction: '',
+      systemInstructionPath: null,
+      imagePaths: [path.join(runDir, 'image.png')],
+      images: [{ mimeType: 'image/png', base64Data: 'aW1hZ2U=' }],
+      runDir
+    }, claudeEntry, {
+      providerBinaries: { claude: fakeClaude },
+      runTimeoutMs: 5_000
+    });
+
+    assert.equal(result, 'IMAGE_OK');
+  } finally {
+    await rm(runDir, { recursive: true, force: true });
+  }
+});
+
 test('Claude streaming uses stream-json and forwards only text deltas', async () => {
   const runDir = await mkdtemp(path.join(os.tmpdir(), 'cli-router-test-'));
   const fakeClaude = path.join(runDir, 'fake-claude');

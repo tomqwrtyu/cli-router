@@ -15,6 +15,21 @@ const usageConfig = {
   }
 };
 
+const attachmentConfig = (tmpDir) => ({
+  tmpDir,
+  attachments: {
+    allowedFileUriHosts: [],
+    allowInsecureFileUris: false,
+    downloadTimeoutMs: 1_000,
+    maxImageBytes: 15 * 1024 * 1024,
+    maxDocBytes: 10 * 1024 * 1024,
+    maxPdfBytes: 10 * 1024 * 1024,
+    maxDocTextChars: 50_000,
+    allowedImageMime: ['image/png', 'image/jpeg', 'image/webp'],
+    allowedDocMime: ['application/json', 'text/plain', 'application/pdf']
+  }
+});
+
 test('token estimation accounts for UTF-8 text more conservatively than chars/4', () => {
   assert.equal(estimateTextTokens(' x'.repeat(10)), 10);
   assert.equal(estimateTextTokens('測'.repeat(10)), 15);
@@ -61,6 +76,32 @@ test('Gemini normalization materializes the system instruction in the run direct
       normalized.systemInstruction
     );
     assert.equal(path.dirname(normalized.systemInstructionPath), normalized.runDir);
+  } finally {
+    if (normalized?.runDir) await rm(normalized.runDir, { recursive: true, force: true });
+    await rm(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('Gemini normalization retains verified image bytes for Claude stream-json stdin', async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'cli-router-image-test-'));
+  const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+  let normalized;
+  try {
+    normalized = await normalizeGeminiRequest({
+      contents: [{
+        role: 'user',
+        parts: [
+          { inlineData: { mimeType: 'image/png', data: pngBase64 } },
+          { text: 'Describe this image' }
+        ]
+      }]
+    }, attachmentConfig(tmpDir), { provider: 'claude', supportsImages: true });
+
+    assert.equal(normalized.images.length, 1);
+    assert.equal(normalized.images[0].mimeType, 'image/png');
+    assert.equal(normalized.images[0].base64Data, pngBase64);
+    assert.equal(normalized.imagePaths.length, 1);
+    assert.match(normalized.prompt, /Describe this image/);
   } finally {
     if (normalized?.runDir) await rm(normalized.runDir, { recursive: true, force: true });
     await rm(tmpDir, { recursive: true, force: true });
