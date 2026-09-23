@@ -40,7 +40,7 @@ const env = [
   'ROUTER_LOCAL_API_PORT=8788',
   `ROUTER_LOCAL_API_TOKEN=${crypto.randomBytes(32).toString('base64url')}`,
   'ROUTER_LOCAL_API_CLIENT_ID=life',
-  'ROUTER_LOCAL_ALLOWED_MODELS=gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna',
+  'ROUTER_LOCAL_ALLOWED_MODELS=gpt-6-sol,gpt-5.6-terra,gpt-6-luna',
   '',
   'ROUTER_AUTH_MODE=jwt',
   'ROUTER_JWT_ALG=ES256',

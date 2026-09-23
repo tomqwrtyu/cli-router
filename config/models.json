@@ -37,9 +37,9 @@
       "estimatedUsage": true
     }
   },
-  "gpt-5.6-sol": {
+  "gpt-6-sol": {
     "provider": "codex",
-    "cliModel": "gpt-5.6-sol",
+    "cliModel": "gpt-6-sol",
     "reasoningEffort": "medium",
     "contextWindow": 1050000,
     "inputCharLimit": 524288,
@@ -81,9 +81,9 @@
       "estimatedUsage": true
     }
   },
-  "gpt-5.6-luna": {
+  "gpt-6-luna": {
     "provider": "codex",
-    "cliModel": "gpt-5.6-luna",
+    "cliModel": "gpt-6-luna",
     "reasoningEffort": "max",
     "contextWindow": 1050000,
     "inputCharLimit": 524288,

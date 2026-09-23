@@ -127,7 +127,7 @@ Requests from Edge Functions without an `Origin` header are unaffected by the br
 Configure a local client and generate its credential without printing it:
 
 ```bash
-npm run configure:local-api -- life gpt-5.6-sol,gpt-5.6-terra,gpt-5.6-luna 8788
+npm run configure:local-api -- life gpt-6-sol,gpt-5.6-terra,gpt-6-luna 8788
 ```
 
 The main process then serves the same Gemini-shaped model and generation paths
@@ -260,7 +260,7 @@ Model entries publish context metadata for clients and server-side preflight.
 All exposed Claude and Codex models share a 524,288-character hard input limit
 and a 786,432-token estimated input limit. `GET /v1beta/models` exposes these
 values as `contextWindow`, `inputCharLimit`, `inputTokenLimit`, and (when known)
-`outputTokenLimit`. GPT-5.6 CLI runs explicitly opt into the 1,050,000-token
+`outputTokenLimit`. Codex CLI runs explicitly opt into the 1,050,000-token
 model context instead of relying on the smaller Codex catalog default.
 
 Provider-wide switches live in `.env`:
@@ -289,8 +289,8 @@ The result is an intersection. For example, a user may have admin access with
 - `restricted`: hidden unless explicitly listed in `allowed_router_models`
 - `admin`: visible only when `allowed_router_models` contains `*`
 
-The default visible models are currently `gpt-5.6-sol`, `gpt-5.6-terra`, and
-`gpt-5.6-luna`. Codex calls pin `model_reasoning_effort` per registry entry,
+The default visible models are currently `gpt-6-sol`, `gpt-5.6-terra`, and
+`gpt-6-luna`. Codex calls pin `model_reasoning_effort` per registry entry,
 independent of the host user's global Codex configuration. Sol uses `medium`,
 Terra uses `high`, and Luna uses `max`.
 
@@ -316,7 +316,7 @@ Block a default-visible model for one user with:
 
 ```sql
 update public.profiles
-set blocked_router_models = array['gpt-5.6-sol']::text[]
+set blocked_router_models = array['gpt-6-sol']::text[]
 where id = '<user-id>';
 ```
 

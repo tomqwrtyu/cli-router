@@ -5,9 +5,13 @@ import { loadLocalApiConfig, loadModelRegistry } from '../src/config.js';
 test('model registry configures per-model reasoning effort', async () => {
   const registry = await loadModelRegistry({ modelRegistryPath: './config/models.json' });
 
-  assert.equal(registry['gpt-5.6-luna'].reasoningEffort, 'max');
-  assert.equal(registry['gpt-5.6-sol'].reasoningEffort, 'medium');
+  assert.equal(registry['gpt-6-luna'].reasoningEffort, 'max');
+  assert.equal(registry['gpt-6-sol'].reasoningEffort, 'medium');
   assert.equal(registry['gpt-5.6-terra'].reasoningEffort, 'high');
+  assert.equal(registry['gpt-6-luna'].cliModel, 'gpt-6-luna');
+  assert.equal(registry['gpt-6-sol'].cliModel, 'gpt-6-sol');
+  assert.equal(registry['gpt-5.6-sol'], undefined);
+  assert.equal(registry['gpt-5.6-luna'], undefined);
   for (const modelId of ['claude-sonnet-latest', 'claude-opus-latest']) {
     assert.equal(registry[modelId].supportsImages, true);
     assert.equal(registry[modelId].access.visibility, 'default');
@@ -31,7 +35,7 @@ test('local API config is disabled by default and fails closed when enabled', ()
       ROUTER_LOCAL_API_ENABLED: 'true',
       ROUTER_LOCAL_API_HOST: '0.0.0.0',
       ROUTER_LOCAL_API_TOKEN: 'a'.repeat(32),
-      ROUTER_LOCAL_ALLOWED_MODELS: 'gpt-5.6-luna'
+      ROUTER_LOCAL_ALLOWED_MODELS: 'gpt-6-luna'
     }),
     /must be 127\.0\.0\.1 or ::1/
   );
@@ -39,7 +43,7 @@ test('local API config is disabled by default and fails closed when enabled', ()
     () => loadLocalApiConfig({
       ROUTER_LOCAL_API_ENABLED: 'true',
       ROUTER_LOCAL_API_TOKEN: 'short',
-      ROUTER_LOCAL_ALLOWED_MODELS: 'gpt-5.6-luna'
+      ROUTER_LOCAL_ALLOWED_MODELS: 'gpt-6-luna'
     }),
     /at least 32 bytes/
   );
@@ -56,7 +60,7 @@ test('local API config parses an explicit model allowlist', () => {
   const config = loadLocalApiConfig({
     ROUTER_LOCAL_API_ENABLED: 'true',
     ROUTER_LOCAL_API_TOKEN: 'a'.repeat(32),
-    ROUTER_LOCAL_ALLOWED_MODELS: 'gpt-5.6-sol, gpt-5.6-luna'
+    ROUTER_LOCAL_ALLOWED_MODELS: 'gpt-6-sol, gpt-6-luna'
   });
-  assert.deepEqual(config.allowedModels, ['gpt-5.6-sol', 'gpt-5.6-luna']);
+  assert.deepEqual(config.allowedModels, ['gpt-6-sol', 'gpt-6-luna']);
 });
