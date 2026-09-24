@@ -413,3 +413,101 @@ test('cancelling a job emits a terminal callback and enforces the three-second l
     await rm(runRoot, { recursive: true, force: true });
   }
 });
+
+test('summary lane is explicitly authorized and does not consume the foreground slot', async () => {
+  const runRoot = await mkdtemp(path.join(os.tmpdir(), 'cli-router-summary-lane-'));
+  let releaseClaims;
+  const claimGate = new Promise((resolve) => { releaseClaims = resolve; });
+  let terminalCount = 0;
+  let resolveTerminals;
+  const terminals = new Promise((resolve) => { resolveTerminals = resolve; });
+  const config = {
+    providers: { codex: true, claude: false },
+    providerBinaries: { codex: '/bin/false' },
+    codexLiveSearch: false,
+    runTimeoutMs: 5_000,
+    tmpDir: runRoot,
+    usage: { imageFallbackTokens: 258, imageTileTokens: 258, imageSmallMaxPixels: 384, imageTileSize: 768, imageMaxTokens: 0 },
+    attachments: { allowedFileUriHosts: [], allowedImageMime: [], allowedDocMime: [] },
+    backgroundJobs: {
+      projectId: 'project-one', maxActivePerUser: 1, maxActiveJobs: 2,
+      maxActiveSummaries: 1, autoSummaryEnabled: true, launchesPerMinute: 6,
+      cancelCooldownMs: 3_000, maxOutputTokens: 16_384, heartbeatMs: 60_000,
+      terminalRetentionMs: 60_000, outbox: { retryIntervalMs: 60_000 }
+    }
+  };
+  const manager = new JobManager({
+    config,
+    registry: {
+      'gpt-test': {
+        provider: 'codex', cliModel: 'gpt-test', reasoningEffort: 'medium',
+        contextWindow: 10_000, inputCharLimit: 8_000, inputTokenLimit: 8_000,
+        outputTokenLimit: 2_000, autoCompactTokenLimit: 8_000, enabled: true
+      }
+    },
+    streamTokens: { issue: async () => 'stream-token' },
+    claimClient: {
+      claim: async (identity) => {
+        await claimGate;
+        return { ...identity, bodyJson, webSearchEnabled: false };
+      }
+    },
+    callbackClient: {
+      deliver: async (event) => {
+        if (event.event === 'router.generation.terminal' && ++terminalCount === 2) resolveTerminals();
+        return { delivered: true };
+      }
+    },
+    outbox: { enqueue: () => assert.fail('unexpected outbox write'), purgeExpired: () => 0, due: () => [], close: () => {} }
+  });
+  const summaryId = '33333333-3333-4333-8333-333333333333';
+  const chatId = '44444444-4444-4444-8444-444444444444';
+  const envelope = (id, action, user = userId) => ({
+    projectId: 'project-one', requestId: id, userId: user, action,
+    model: 'gpt-test', payloadHash
+  });
+  const claims = (id, action, allowAutoSummary = true, user = userId) => ({
+    project_id: 'project-one', request_id: id, user_id: user, action,
+    model: 'gpt-test', payload_hash: payloadHash,
+    routerClient: { clientId: 'mirastral', allowAutoSummary, quota: { maxActivePerUser: 1 } }
+  });
+  try {
+    await assert.rejects(
+      () => manager.launch(envelope(summaryId, 'auto_summary'), claims(summaryId, 'auto_summary', false)),
+      (error) => error.statusCode === 403 && error.details.reason === 'summary_lane_denied'
+    );
+    await manager.launch(envelope(summaryId, 'auto_summary'), claims(summaryId, 'auto_summary'));
+    const anotherSummaryUser = '99999999-9999-4999-8999-999999999999';
+    await assert.rejects(
+      () => manager.launch(envelope('88888888-8888-4888-8888-888888888888', 'auto_summary', anotherSummaryUser),
+        claims('88888888-8888-4888-8888-888888888888', 'auto_summary', true,
+          anotherSummaryUser)),
+      (error) => error.statusCode === 429 && error.details.reason === 'worker_capacity_exceeded'
+    );
+    manager.cancel(summaryId, claims(summaryId, 'auto_summary'));
+    await manager.launch(envelope(chatId, 'chat'), claims(chatId, 'chat'));
+    assert.equal(manager.activeJobs, 2);
+    assert.equal(manager.activeSummaries, 1);
+    assert.equal(manager.clientLaunchEvents.get('mirastral:' + userId)?.length, 2);
+    await assert.rejects(
+      () => manager.launch(envelope('55555555-5555-4555-8555-555555555555', 'auto_summary'),
+        claims('55555555-5555-4555-8555-555555555555', 'auto_summary')),
+      (error) => error.statusCode === 429 && error.details.reason === 'user_concurrency_exceeded'
+    );
+    const otherUser = '66666666-6666-4666-8666-666666666666';
+    await assert.rejects(
+      () => manager.launch(envelope('77777777-7777-4777-8777-777777777777', 'chat', otherUser),
+        claims('77777777-7777-4777-8777-777777777777', 'chat', true, otherUser)),
+      (error) => error.statusCode === 429 && error.details.reason === 'worker_capacity_exceeded'
+    );
+    manager.cancel(chatId, claims(chatId, 'chat'));
+    releaseClaims();
+    await terminals;
+    assert.equal(manager.activeJobs, 0);
+    assert.equal(manager.activeSummaries, 0);
+  } finally {
+    releaseClaims();
+    manager.close();
+    await rm(runRoot, { recursive: true, force: true });
+  }
+});

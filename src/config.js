@@ -129,6 +129,7 @@ function normalizeTrustedClients(value) {
       publicJwk: client.publicJwk,
       allowedModels,
       allowedOrigins,
+      allowAutoSummary: client.allowAutoSummary === true,
       quota: {
         launchesPerMinute: Number.isInteger(client.quota?.launchesPerMinute) && client.quota.launchesPerMinute > 0
           ? client.quota.launchesPerMinute
@@ -277,6 +278,9 @@ export function loadConfig() {
         ttlSeconds: positiveIntEnv('ROUTER_STREAM_TOKEN_TTL_SECONDS', 60)
       },
       maxActivePerUser: positiveIntEnv('ROUTER_MAX_ACTIVE_PER_USER', 1),
+      maxActiveJobs: positiveIntEnv('ROUTER_MAX_ACTIVE_JOBS', 2),
+      maxActiveSummaries: positiveIntEnv('ROUTER_MAX_ACTIVE_SUMMARIES', 1),
+      autoSummaryEnabled: boolEnv('ROUTER_AUTO_SUMMARY_ENABLED', false),
       launchesPerMinute: positiveIntEnv('ROUTER_LAUNCHES_PER_MINUTE', 6),
       cancelCooldownMs: intEnv('ROUTER_CANCEL_COOLDOWN_MS', 3_000),
       maxOutputTokens: positiveIntEnv('ROUTER_MAX_OUTPUT_TOKENS', 16_384),

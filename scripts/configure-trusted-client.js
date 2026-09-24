@@ -28,6 +28,7 @@ const client = [{
   publicJwk,
   allowedOrigins,
   allowedModels: ['*'],
+  allowAutoSummary: values.get('ROUTER_AUTO_SUMMARY_ENABLED') === 'true',
   quota: {
     launchesPerMinute: Number(values.get('ROUTER_LAUNCHES_PER_MINUTE') || 6),
     maxActivePerUser: Number(values.get('ROUTER_MAX_ACTIVE_PER_USER') || 1)

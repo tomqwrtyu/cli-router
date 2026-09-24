@@ -14,7 +14,8 @@ const ACTIONS = new Set([
   'interpret_lot',
   'rectification',
   'initial_analysis',
-  'fortune'
+  'fortune',
+  'auto_summary'
 ]);
 const TERMINAL = new Set([
   'completed',
@@ -103,6 +104,9 @@ export class JobManager {
     this.now = now;
     this.jobs = new Map();
     this.activeByUser = new Map();
+    this.activeSummariesByUser = new Map();
+    this.activeJobs = 0;
+    this.activeSummaries = 0;
     this.cancelledAt = new Map();
     this.clientLaunchEvents = new Map();
     this.usedStreamTokens = new Set();
@@ -153,17 +157,40 @@ export class JobManager {
       });
     }
     this.providerHealth?.assertAvailable(modelEntry.provider);
-    const active = this.activeByUser.get(envelope.userId) || 0;
+    const isSummary = envelope.action === 'auto_summary';
+    if (isSummary && (
+      this.config.backgroundJobs.autoSummaryEnabled !== true ||
+      claims.routerClient?.allowAutoSummary !== true
+    )) {
+      throw new HttpError(403, 'PERMISSION_DENIED', 'Automatic summary lane is not allowed', {
+        reason: 'summary_lane_denied'
+      });
+    }
+    const active = isSummary
+      ? (this.activeSummariesByUser.get(envelope.userId) || 0)
+      : (this.activeByUser.get(envelope.userId) || 0);
     const clientMaxActive = claims.routerClient?.quota?.maxActivePerUser ||
       this.config.backgroundJobs.maxActivePerUser;
-    const maxActive = Math.min(this.config.backgroundJobs.maxActivePerUser, clientMaxActive);
+    const maxActive = isSummary ? 1 : Math.min(this.config.backgroundJobs.maxActivePerUser, clientMaxActive);
     if (active >= maxActive) {
       throw new HttpError(429, 'RESOURCE_EXHAUSTED', 'User already has an active generation', {
         reason: 'user_concurrency_exceeded',
         retryAfter: 3
       });
     }
-    const cancelledAt = this.cancelledAt.get(envelope.userId) || 0;
+    const maxActiveJobs = this.config.backgroundJobs.autoSummaryEnabled === true
+      ? (this.config.backgroundJobs.maxActiveJobs || 2)
+      : Number.POSITIVE_INFINITY;
+    if (this.activeJobs >= maxActiveJobs ||
+      (isSummary && this.activeJobs >= maxActiveJobs - 1) ||
+      (isSummary && this.activeSummaries >= (this.config.backgroundJobs.maxActiveSummaries || 1))) {
+      throw new HttpError(429, 'RESOURCE_EXHAUSTED', 'Background worker capacity is full', {
+        reason: 'worker_capacity_exceeded',
+        retryAfter: 3
+      });
+    }
+    const cooldownKey = `${envelope.userId}:${isSummary ? 'summary' : 'foreground'}`;
+    const cancelledAt = this.cancelledAt.get(cooldownKey) || 0;
     const cooldownRemaining = cancelledAt + this.config.backgroundJobs.cancelCooldownMs - this.now();
     if (cooldownRemaining > 0) {
       throw new HttpError(429, 'RESOURCE_EXHAUSTED', 'Generation cancellation cooldown is active', {
@@ -187,6 +214,7 @@ export class JobManager {
       chartId: envelope.chartId || null,
       messageId: envelope.messageId || null,
       action: envelope.action,
+      lane: isSummary ? 'summary' : 'foreground',
       model: envelope.model,
       provider: modelEntry.provider,
       payloadHash: envelope.payloadHash,
@@ -202,7 +230,13 @@ export class JobManager {
     };
     job.streamJtis = new Set();
     this.jobs.set(job.id, job);
-    this.activeByUser.set(job.userId, active + 1);
+    if (isSummary) {
+      this.activeSummariesByUser.set(job.userId, active + 1);
+      this.activeSummaries += 1;
+    } else {
+      this.activeByUser.set(job.userId, active + 1);
+    }
+    this.activeJobs += 1;
     queueMicrotask(() => void this.run(job, modelEntry));
     return { accepted: true, duplicate: false, request: publicJob(job), streamToken };
   }
@@ -303,7 +337,7 @@ export class JobManager {
     if (TERMINAL.has(job.status)) return publicJob(job);
     job.cancelRequested = true;
     job.controller.abort('cancelled');
-    this.cancelledAt.set(job.userId, this.now());
+    this.cancelledAt.set(`${job.userId}:${job.lane}`, this.now());
     return publicJob(job);
   }
 
@@ -350,7 +384,7 @@ export class JobManager {
       }
       const requestBody = JSON.parse(claimed.bodyJson);
       normalized = await normalizeGeminiRequest(requestBody, this.config, modelEntry);
-      job.webSearchEnabled = claimed.webSearchEnabled !== false;
+      job.webSearchEnabled = job.lane === 'summary' ? false : claimed.webSearchEnabled !== false;
       normalized.webSearchEnabled = job.webSearchEnabled;
       assertPromptWithinModelLimits(normalized, modelEntry, this.config);
       if (job.controller.signal.aborted) {
@@ -417,7 +451,13 @@ export class JobManager {
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       if (normalized?.runDir) await fs.rm(normalized.runDir, { recursive: true, force: true });
       job.completedAt = this.now();
-      this.activeByUser.set(job.userId, Math.max(0, (this.activeByUser.get(job.userId) || 1) - 1));
+      if (job.lane === 'summary') {
+        this.activeSummariesByUser.set(job.userId, Math.max(0, (this.activeSummariesByUser.get(job.userId) || 1) - 1));
+        this.activeSummaries = Math.max(0, this.activeSummaries - 1);
+      } else {
+        this.activeByUser.set(job.userId, Math.max(0, (this.activeByUser.get(job.userId) || 1) - 1));
+      }
+      this.activeJobs = Math.max(0, this.activeJobs - 1);
       const callbackEvent = buildJobCallbackEvent({
         job,
         usageMetadata: job.usageMetadata,

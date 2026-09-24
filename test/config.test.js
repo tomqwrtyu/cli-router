@@ -6,12 +6,20 @@ test('model registry configures per-model reasoning effort', async () => {
   const registry = await loadModelRegistry({ modelRegistryPath: './config/models.json' });
 
   assert.equal(registry['gpt-6-luna'].reasoningEffort, 'max');
-  assert.equal(registry['gpt-6-sol'].reasoningEffort, 'medium');
+  assert.equal(registry['gpt-6-sol'].reasoningEffort, 'high');
   assert.equal(registry['gpt-5.6-terra'].reasoningEffort, 'high');
   assert.equal(registry['gpt-6-luna'].cliModel, 'gpt-6-luna');
   assert.equal(registry['gpt-6-sol'].cliModel, 'gpt-6-sol');
   assert.equal(registry['gpt-5.6-sol'], undefined);
   assert.equal(registry['gpt-5.6-luna'], undefined);
+  assert.deepEqual(registry['gpt-6-sol'].billing, {
+    unit: 'credits_per_1m_tokens', input: 2, output: 10,
+    costMultiplier: 2, estimatedUsage: true
+  });
+  assert.deepEqual(registry['gpt-6-luna'].billing, {
+    unit: 'credits_per_1m_tokens', input: 0.1, output: 0.5,
+    costMultiplier: 2, estimatedUsage: true
+  });
   for (const modelId of ['claude-sonnet-latest', 'claude-opus-latest']) {
     assert.equal(registry[modelId].supportsImages, true);
     assert.equal(registry[modelId].access.visibility, 'default');
