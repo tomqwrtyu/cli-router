@@ -355,15 +355,25 @@ export function streamCli(normalized, modelEntry, config, onText, options = {}) 
         const output = providerTokenCount(event.usage.output_tokens);
         const cacheRead = providerTokenCount(event.usage.cache_read_input_tokens);
         const cacheWrite = providerTokenCount(event.usage.cache_creation_input_tokens);
+        const cacheWrite5m = providerTokenCount(
+          event.usage.cache_creation?.ephemeral_5m_input_tokens
+        );
+        const cacheWrite1h = providerTokenCount(
+          event.usage.cache_creation?.ephemeral_1h_input_tokens
+        );
         // Claude reports cached prompt tokens separately from input_tokens. Count all
         // logical prompt tokens so billing is comparable with the Codex usage shape.
         const prompt = input + cacheRead + cacheWrite;
         providerUsage = {
           promptTokenCount: prompt,
+          uncachedInputTokenCount: input,
           candidatesTokenCount: output,
           totalTokenCount: prompt + output,
+          cachedInputTokenCount: cacheRead,
           cacheReadTokenCount: cacheRead,
           cacheWriteTokenCount: cacheWrite,
+          cacheWrite5mTokenCount: cacheWrite5m,
+          cacheWrite1hTokenCount: cacheWrite1h,
           estimated: false,
           usageSource: 'provider'
         };
@@ -390,11 +400,18 @@ export function streamCli(normalized, modelEntry, config, onText, options = {}) 
       if (event.type === 'turn.completed' && event.usage) {
         const input = Number(event.usage.input_tokens || 0);
         const output = Number(event.usage.output_tokens || 0);
+        const cacheRead = providerTokenCount(event.usage.cached_input_tokens);
+        const cacheWrite = providerTokenCount(
+          event.usage.cache_write_input_tokens ?? event.usage.cache_write_tokens
+        );
         providerUsage = {
           promptTokenCount: input,
+          uncachedInputTokenCount: Math.max(0, input - cacheRead - cacheWrite),
           candidatesTokenCount: output,
           totalTokenCount: input + output,
-          cachedInputTokenCount: Number(event.usage.cached_input_tokens || 0),
+          cachedInputTokenCount: cacheRead,
+          cacheReadTokenCount: cacheRead,
+          cacheWriteTokenCount: cacheWrite,
           reasoningTokenCount: Number(event.usage.reasoning_tokens || 0),
           estimated: false,
           usageSource: 'provider'

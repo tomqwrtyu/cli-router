@@ -17,12 +17,16 @@ Deno.test('caps expensive client billing at Gemini Flash rates', () => {
     unit: 'credits_per_1m_tokens',
     input: 5,
     output: 30,
+    cacheReadInputMultiplier: 0.05,
+    cacheWriteInputMultiplier: 1.25,
     costMultiplier: 2,
     estimatedUsage: true,
   }, cap)
   assert(billing?.input === 1.5, 'input rate was not capped')
   assert(billing?.output === 9, 'output rate was not capped')
   assert(billing?.costMultiplier === 2, 'multiplier changed unexpectedly')
+  assert(billing?.cacheReadInputMultiplier === 0.05, 'cache read multiplier changed unexpectedly')
+  assert(billing?.cacheWriteInputMultiplier === 1.25, 'cache write multiplier changed unexpectedly')
   assert(billing?.priceCeilingModel === 'gemini-3.5-flash', 'reference model is missing')
 })
 

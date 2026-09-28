@@ -14,16 +14,20 @@ test('model registry configures per-model reasoning effort', async () => {
   assert.equal(registry['gpt-5.6-luna'], undefined);
   assert.deepEqual(registry['gpt-6-sol'].billing, {
     unit: 'credits_per_1m_tokens', input: 2, output: 10,
+    cacheReadInputMultiplier: 0.1, cacheWriteInputMultiplier: 1.25,
     costMultiplier: 2, estimatedUsage: true
   });
   assert.deepEqual(registry['gpt-6-luna'].billing, {
     unit: 'credits_per_1m_tokens', input: 0.1, output: 0.5,
+    cacheReadInputMultiplier: 0.1, cacheWriteInputMultiplier: 1.25,
     costMultiplier: 2, estimatedUsage: true
   });
   for (const modelId of ['claude-sonnet-latest', 'claude-opus-latest']) {
     assert.equal(registry[modelId].supportsImages, true);
     assert.equal(registry[modelId].access.visibility, 'default');
   }
+  assert.equal(registry['claude-sonnet-latest'].billing.cacheReadInputMultiplier, 0.1);
+  assert.equal(registry['claude-opus-latest'].billing.cacheReadInputMultiplier, 0.05);
 });
 
 test('model registry rejects unknown local allowlist entries', async () => {

@@ -128,7 +128,7 @@ test('Claude streaming uses stream-json and forwards only text deltas', async ()
         `printf '%s\\n' '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"first "}}}'`,
         `printf '%s\\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"duplicate"}]}}'`,
         `printf '%s\\n' '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"second"}}}'`,
-        `printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"result":"duplicate","usage":{"input_tokens":2,"output_tokens":100,"cache_read_input_tokens":300,"cache_creation_input_tokens":700}}'`
+        `printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"result":"duplicate","usage":{"input_tokens":2,"output_tokens":100,"cache_read_input_tokens":300,"cache_creation_input_tokens":700,"cache_creation":{"ephemeral_5m_input_tokens":600,"ephemeral_1h_input_tokens":100}}}'`
       ].join('\n')
     );
     await chmod(fakeClaude, 0o700);
@@ -153,10 +153,14 @@ test('Claude streaming uses stream-json and forwards only text deltas', async ()
     assert.equal(chunks.join(''), 'first second');
     assert.deepEqual(result.usageMetadata, {
       promptTokenCount: 1002,
+      uncachedInputTokenCount: 2,
       candidatesTokenCount: 100,
       totalTokenCount: 1102,
+      cachedInputTokenCount: 300,
       cacheReadTokenCount: 300,
       cacheWriteTokenCount: 700,
+      cacheWrite5mTokenCount: 600,
+      cacheWrite1hTokenCount: 100,
       estimated: false,
       usageSource: 'provider'
     });
@@ -219,7 +223,7 @@ test('Codex streaming uses JSON events and forwards only agent messages', async 
         `printf '%s\\n' '{"type":"thread.started","thread_id":"test"}'`,
         `printf '%s\\n' '{"type":"item.completed","item":{"type":"reasoning","text":"hidden"}}'`,
         `printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"CODEX_EVENT_OK"}}'`,
-        `printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'`
+        `printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":1000,"cached_input_tokens":700,"cache_write_input_tokens":100,"output_tokens":100}}'`
       ].join('\n')
     );
     await chmod(fakeCodex, 0o700);
@@ -232,7 +236,7 @@ test('Codex streaming uses JSON events and forwards only agent messages', async 
       autoCompactTokenLimit: 800_000
     };
 
-    await streamCli(
+    const result = await streamCli(
       {
         prompt: 'prompt',
         systemInstruction: '',
@@ -248,6 +252,18 @@ test('Codex streaming uses JSON events and forwards only agent messages', async 
     );
 
     assert.equal(chunks.join(''), 'CODEX_EVENT_OK');
+    assert.deepEqual(result.usageMetadata, {
+      promptTokenCount: 1000,
+      uncachedInputTokenCount: 200,
+      candidatesTokenCount: 100,
+      totalTokenCount: 1100,
+      cachedInputTokenCount: 700,
+      cacheReadTokenCount: 700,
+      cacheWriteTokenCount: 100,
+      reasoningTokenCount: 0,
+      estimated: false,
+      usageSource: 'provider'
+    });
     const command = providerCommand({ prompt: '', imagePaths: [], runDir }, modelEntry, {
       providerBinaries: { codex: 'codex' }
     }, { stream: true });

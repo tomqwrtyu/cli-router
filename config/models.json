@@ -14,6 +14,9 @@
       "unit": "credits_per_1m_tokens",
       "input": 2.0,
       "output": 10.0,
+      "cacheReadInputMultiplier": 0.1,
+      "cacheWriteInputMultiplier": 1.25,
+      "cacheWrite1hInputMultiplier": 2.0,
       "costMultiplier": 2.0,
       "estimatedUsage": true
     }
@@ -33,6 +36,9 @@
       "unit": "credits_per_1m_tokens",
       "input": 4.0,
       "output": 20.0,
+      "cacheReadInputMultiplier": 0.05,
+      "cacheWriteInputMultiplier": 1.25,
+      "cacheWrite1hInputMultiplier": 2.0,
       "costMultiplier": 2.0,
       "estimatedUsage": true
     }
@@ -55,6 +61,8 @@
       "unit": "credits_per_1m_tokens",
       "input": 2.0,
       "output": 10.0,
+      "cacheReadInputMultiplier": 0.1,
+      "cacheWriteInputMultiplier": 1.25,
       "costMultiplier": 2.0,
       "estimatedUsage": true
     }
@@ -77,6 +85,8 @@
       "unit": "credits_per_1m_tokens",
       "input": 2.5,
       "output": 15.0,
+      "cacheReadInputMultiplier": 0.1,
+      "cacheWriteInputMultiplier": 1.25,
       "costMultiplier": 2.0,
       "estimatedUsage": true
     }
@@ -99,6 +109,8 @@
       "unit": "credits_per_1m_tokens",
       "input": 0.1,
       "output": 0.5,
+      "cacheReadInputMultiplier": 0.1,
+      "cacheWriteInputMultiplier": 1.25,
       "costMultiplier": 2.0,
       "estimatedUsage": true
     }
