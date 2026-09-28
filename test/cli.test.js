@@ -128,13 +128,13 @@ test('Claude streaming uses stream-json and forwards only text deltas', async ()
         `printf '%s\\n' '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"first "}}}'`,
         `printf '%s\\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"duplicate"}]}}'`,
         `printf '%s\\n' '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"second"}}}'`,
-        `printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"result":"duplicate"}'`
+        `printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"result":"duplicate","usage":{"input_tokens":2,"output_tokens":100,"cache_read_input_tokens":300,"cache_creation_input_tokens":700}}'`
       ].join('\n')
     );
     await chmod(fakeClaude, 0o700);
     const chunks = [];
 
-    await streamCli(
+    const result = await streamCli(
       {
         prompt: 'prompt',
         systemInstruction: '',
@@ -151,6 +151,15 @@ test('Claude streaming uses stream-json and forwards only text deltas', async ()
     );
 
     assert.equal(chunks.join(''), 'first second');
+    assert.deepEqual(result.usageMetadata, {
+      promptTokenCount: 1002,
+      candidatesTokenCount: 100,
+      totalTokenCount: 1102,
+      cacheReadTokenCount: 300,
+      cacheWriteTokenCount: 700,
+      estimated: false,
+      usageSource: 'provider'
+    });
     const command = providerCommand({ prompt: '', runDir }, claudeEntry, {
       providerBinaries: { claude: 'claude' }
     }, { stream: true });

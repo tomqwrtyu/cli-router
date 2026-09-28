@@ -4,6 +4,11 @@ import { StringDecoder } from 'node:string_decoder';
 import { HttpError } from './errors.js';
 import { quotaErrorDetails } from './provider-health.js';
 
+function providerTokenCount(value) {
+  const count = Number(value || 0);
+  return Number.isFinite(count) && count > 0 ? count : 0;
+}
+
 export function claudeStreamInput(normalized) {
   const imageParts = (normalized.images || []).map((image) => {
     if (!image.base64Data || !image.mimeType) {
@@ -346,12 +351,19 @@ export function streamCli(normalized, modelEntry, config, onText, options = {}) 
         claudeStreamError = event.error?.message || event.result || JSON.stringify(event);
       }
       if (event.type === 'result' && event.usage) {
+        const input = providerTokenCount(event.usage.input_tokens);
+        const output = providerTokenCount(event.usage.output_tokens);
+        const cacheRead = providerTokenCount(event.usage.cache_read_input_tokens);
+        const cacheWrite = providerTokenCount(event.usage.cache_creation_input_tokens);
+        // Claude reports cached prompt tokens separately from input_tokens. Count all
+        // logical prompt tokens so billing is comparable with the Codex usage shape.
+        const prompt = input + cacheRead + cacheWrite;
         providerUsage = {
-          promptTokenCount: Number(event.usage.input_tokens || 0),
-          candidatesTokenCount: Number(event.usage.output_tokens || 0),
-          totalTokenCount: Number(event.usage.input_tokens || 0) + Number(event.usage.output_tokens || 0),
-          cacheReadTokenCount: Number(event.usage.cache_read_input_tokens || 0),
-          cacheWriteTokenCount: Number(event.usage.cache_creation_input_tokens || 0),
+          promptTokenCount: prompt,
+          candidatesTokenCount: output,
+          totalTokenCount: prompt + output,
+          cacheReadTokenCount: cacheRead,
+          cacheWriteTokenCount: cacheWrite,
           estimated: false,
           usageSource: 'provider'
         };

@@ -13,7 +13,7 @@
     "billing": {
       "unit": "credits_per_1m_tokens",
       "input": 2.0,
-      "output": 12.0,
+      "output": 10.0,
       "costMultiplier": 2.0,
       "estimatedUsage": true
     }
