@@ -181,8 +181,9 @@ export class JobManager {
     const maxActiveJobs = this.config.backgroundJobs.autoSummaryEnabled === true
       ? (this.config.backgroundJobs.maxActiveJobs || 2)
       : Number.POSITIVE_INFINITY;
+    const foregroundActive = this.activeJobs - this.activeSummaries;
     if (this.activeJobs >= maxActiveJobs ||
-      (isSummary && this.activeJobs >= maxActiveJobs - 1) ||
+      (isSummary && foregroundActive === 0 && this.activeJobs >= maxActiveJobs - 1) ||
       (isSummary && this.activeSummaries >= (this.config.backgroundJobs.maxActiveSummaries || 1))) {
       throw new HttpError(429, 'RESOURCE_EXHAUSTED', 'Background worker capacity is full', {
         reason: 'worker_capacity_exceeded',
@@ -501,6 +502,9 @@ export class JobManager {
         projectId: job.projectId,
         requestId: job.id,
         userId: job.userId,
+        action: job.action,
+        model: job.model,
+        provider: job.provider,
         status: job.status,
         at: new Date().toISOString()
       });

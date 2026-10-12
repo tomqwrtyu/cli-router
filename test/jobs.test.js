@@ -414,11 +414,13 @@ test('cancelling a job emits a terminal callback and enforces the three-second l
   }
 });
 
-test('summary lane is explicitly authorized and does not consume the foreground slot', async () => {
+for (const order of ['summary-first', 'chat-first']) {
+test(`summary lane permits both launch orders and reserves foreground capacity: ${order}`, async () => {
   const runRoot = await mkdtemp(path.join(os.tmpdir(), 'cli-router-summary-lane-'));
   let releaseClaims;
   const claimGate = new Promise((resolve) => { releaseClaims = resolve; });
   let terminalCount = 0;
+  let heartbeat;
   let resolveTerminals;
   const terminals = new Promise((resolve) => { resolveTerminals = resolve; });
   const config = {
@@ -454,6 +456,7 @@ test('summary lane is explicitly authorized and does not consume the foreground 
     },
     callbackClient: {
       deliver: async (event) => {
+        if (event.event === 'router.generation.heartbeat') heartbeat = event;
         if (event.event === 'router.generation.terminal' && ++terminalCount === 2) resolveTerminals();
         return { delivered: true };
       }
@@ -476,16 +479,24 @@ test('summary lane is explicitly authorized and does not consume the foreground 
       () => manager.launch(envelope(summaryId, 'auto_summary'), claims(summaryId, 'auto_summary', false)),
       (error) => error.statusCode === 403 && error.details.reason === 'summary_lane_denied'
     );
+    if (order === 'chat-first') await manager.launch(envelope(chatId, 'chat'), claims(chatId, 'chat'));
     await manager.launch(envelope(summaryId, 'auto_summary'), claims(summaryId, 'auto_summary'));
+    await manager.sendHeartbeat({ ...manager.jobs.get(summaryId), status: 'running' });
+    assert.equal(heartbeat.action, 'auto_summary');
+    assert.equal(heartbeat.model, 'gpt-test');
+    assert.equal(heartbeat.provider, 'codex');
+    assert.equal(heartbeat.output, undefined);
     const anotherSummaryUser = '99999999-9999-4999-8999-999999999999';
+    config.backgroundJobs.maxActiveSummaries = 2;
     await assert.rejects(
       () => manager.launch(envelope('88888888-8888-4888-8888-888888888888', 'auto_summary', anotherSummaryUser),
         claims('88888888-8888-4888-8888-888888888888', 'auto_summary', true,
           anotherSummaryUser)),
       (error) => error.statusCode === 429 && error.details.reason === 'worker_capacity_exceeded'
     );
+    config.backgroundJobs.maxActiveSummaries = 1;
     manager.cancel(summaryId, claims(summaryId, 'auto_summary'));
-    await manager.launch(envelope(chatId, 'chat'), claims(chatId, 'chat'));
+    if (order === 'summary-first') await manager.launch(envelope(chatId, 'chat'), claims(chatId, 'chat'));
     assert.equal(manager.activeJobs, 2);
     assert.equal(manager.activeSummaries, 1);
     assert.equal(manager.clientLaunchEvents.get('mirastral:' + userId)?.length, 2);
@@ -511,3 +522,4 @@ test('summary lane is explicitly authorized and does not consume the foreground 
     await rm(runRoot, { recursive: true, force: true });
   }
 });
+}
