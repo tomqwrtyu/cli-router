@@ -28,10 +28,90 @@ test('Claude sends large prompts through stdin instead of argv', async () => {
   assert.equal(command.stdin, prompt);
   assert.equal(command.args.includes(prompt), false);
   assert.equal(command.args.includes(normalized.systemInstruction), false);
+  assert.equal(command.args[command.args.indexOf('--tools') + 1], '');
+  assert.equal(command.args[command.args.indexOf('--max-turns') + 1], '1');
+  assert.match(command.args[command.args.indexOf('--append-system-prompt') + 1], /No tools, shell/);
   assert.deepEqual(
     command.args.slice(command.args.indexOf('--system-prompt-file')),
     ['--system-prompt-file', normalized.systemInstructionPath]
   );
+});
+
+test('Claude without an application system prompt replaces the coding persona with text-only instructions', () => {
+  const command = providerCommand({ prompt: 'Draw one card', runDir: os.tmpdir() }, claudeEntry, {
+    providerBinaries: { claude: 'claude' }
+  });
+  assert.match(command.args[command.args.indexOf('--system-prompt') + 1], /text-only API/);
+  assert.equal(command.args.includes('--append-system-prompt'), false);
+  assert.equal(command.args[command.args.indexOf('--max-turns') + 1], '1');
+});
+
+for (const mode of ['stream', 'plain', 'image-json']) {
+  test(`Claude terminates a tool-markup loop before the timeout: ${mode}`, async () => {
+    const runDir = await mkdtemp(path.join(os.tmpdir(), 'cli-router-loop-'));
+    const fakeClaude = path.join(runDir, 'fake-claude.mjs');
+    const invoke = '<invoke name="Bash"><parameter name="command">echo ok</parameter></invoke>';
+    try {
+      await writeFile(fakeClaude, [
+        '#!/usr/bin/env node',
+        'process.stdin.resume();',
+        'process.stdin.on("end", () => {',
+        mode === 'plain'
+          ? `process.stdout.write(${JSON.stringify(invoke.repeat(108))});`
+          : `for (let i=0;i<108;i++) process.stdout.write(JSON.stringify({type:'stream_event',event:{type:'content_block_delta',delta:{type:'text_delta',text:${JSON.stringify(invoke)}}}})+'\\n');`,
+        `process.stdout.write(JSON.stringify({type:'stream_event',event:{type:'content_block_delta',delta:{type:'text_delta',text:'NEVER_FORWARD_THIS'}}})+'\\n');`,
+        'setInterval(() => {}, 1000);',
+        '});'
+      ].join('\n'));
+      await chmod(fakeClaude, 0o700);
+      const normalized = {
+        prompt: 'Draw one card', runDir, imagePaths: [],
+        ...(mode === 'image-json' ? { images: [{ mimeType: 'image/png', base64Data: 'aW1hZ2U=' }] } : {})
+      };
+      const config = { providerBinaries: { claude: fakeClaude }, runTimeoutMs: 5_000 };
+      const chunks = [];
+      const started = Date.now();
+      await assert.rejects(
+        () => mode === 'stream'
+          ? streamCli(normalized, claudeEntry, config, (text) => chunks.push(text))
+          : runCliOnce(normalized, claudeEntry, config),
+        (error) => error.statusCode === 502 && error.details.reason === 'provider_tool_call_loop'
+      );
+      assert.ok(Date.now() - started < 4_000, 'waited for the provider timeout instead of stopping the loop');
+      assert.equal(chunks.join('').includes('NEVER_FORWARD_THIS'), false);
+      assert.ok(chunks.join('').length < invoke.repeat(108).length);
+    } finally {
+      await rm(runDir, { recursive: true, force: true });
+    }
+  });
+}
+
+test('Claude structured tool use fails without exposing tool input or forwarding later text', async () => {
+  const runDir = await mkdtemp(path.join(os.tmpdir(), 'cli-router-tool-use-'));
+  const fakeClaude = path.join(runDir, 'fake-claude.mjs');
+  try {
+    const events = [
+      { type: 'stream_event', event: { type: 'content_block_start', content_block: {
+        type: 'tool_use', name: 'Bash', input: { command: 'private-tool-input' }
+      } } },
+      { type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'unexpected continuation' } } }
+    ];
+    await writeFile(fakeClaude, [
+      '#!/usr/bin/env node', 'process.stdin.resume();',
+      `process.stdin.on('end',()=>{process.stdout.write(${JSON.stringify(events.map(event => JSON.stringify(event)).join('\n') + '\n')});setInterval(()=>{},1000);});`
+    ].join('\n'));
+    await chmod(fakeClaude, 0o700);
+    const chunks = [];
+    await assert.rejects(
+      () => streamCli({ prompt: 'prompt', runDir, imagePaths: [] }, claudeEntry,
+        { providerBinaries: { claude: fakeClaude }, runTimeoutMs: 5_000 }, (text) => chunks.push(text)),
+      (error) => error.statusCode === 502 && error.details.reason === 'provider_unexpected_tool_use' &&
+        !JSON.stringify(error).includes('private-tool-input')
+    );
+    assert.deepEqual(chunks, []);
+  } finally {
+    await rm(runDir, { recursive: true, force: true });
+  }
 });
 
 test('Claude image requests use verified base64 blocks through stream-json stdin', () => {

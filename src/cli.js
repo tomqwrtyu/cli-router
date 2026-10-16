@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
 import { HttpError } from './errors.js';
 import { quotaErrorDetails } from './provider-health.js';
+import { CLAUDE_TEXT_ONLY_INSTRUCTION, createClaudeOutputInspector } from './claude-output.js';
 
 function providerTokenCount(value) {
   const count = Number(value || 0);
@@ -50,6 +51,7 @@ function claudeJsonResult(output) {
     } catch {
       continue;
     }
+    if (!event || typeof event !== 'object' || Array.isArray(event)) continue;
     if (event.type === 'assistant' && Array.isArray(event.message?.content)) {
       for (const part of event.message.content) {
         if (part?.type === 'text' && typeof part.text === 'string') assistantText.push(part.text);
@@ -73,8 +75,7 @@ export function providerCommand(normalized, modelEntry, config, options = {}) {
       '-p',
       '--output-format',
       outputFormat,
-      ...(options.stream ? ['--include-partial-messages', '--verbose'] : []),
-      ...(!options.stream && hasImages ? ['--verbose'] : []),
+      ...(options.stream || hasImages ? ['--include-partial-messages', '--verbose'] : []),
       ...(hasImages ? ['--input-format', 'stream-json'] : []),
       '--safe-mode',
       '--no-session-persistence',
@@ -83,6 +84,10 @@ export function providerCommand(normalized, modelEntry, config, options = {}) {
       'dontAsk',
       '--tools',
       '',
+      '--max-turns',
+      '1',
+      normalized.systemInstruction ? '--append-system-prompt' : '--system-prompt',
+      CLAUDE_TEXT_ONLY_INSTRUCTION,
       '--model',
       modelEntry.cliModel
     ];
@@ -206,6 +211,15 @@ function emptyProviderError(provider, diagnostic = '', config = {}) {
   });
 }
 
+function claudeProtocolError(reason) {
+  return new HttpError(502, 'UNAVAILABLE', reason === 'provider_tool_call_loop'
+    ? 'Provider repeatedly emitted unavailable tool calls'
+    : 'Provider attempted a tool call in text-only mode', {
+    reason,
+    provider: 'claude'
+  });
+}
+
 function terminateProcessGroup(child, signal) {
   if (!child.pid) return;
   try {
@@ -233,6 +247,38 @@ export function runCliOnce(normalized, modelEntry, config) {
 
     const stdout = [];
     const stderr = [];
+    const claudeInspector = modelEntry.provider === 'claude' ? createClaudeOutputInspector() : null;
+    const claudeDecoder = new StringDecoder('utf8');
+    let claudeLineBuffer = '';
+    let claudeOutputError = null;
+    const inspectClaudeOutput = (text, final = false) => {
+      if (!claudeInspector || claudeOutputError) return;
+      const fail = (reason) => {
+        if (!reason) return;
+        claudeOutputError = claudeProtocolError(reason);
+        if (child.exitCode === null && child.signalCode === null) {
+          terminateProcessGroup(child, 'SIGTERM');
+          setTimeout(() => terminateProcessGroup(child, 'SIGKILL'), 2_000).unref();
+        }
+      };
+      if (!claudeJsonOutput) {
+        fail(claudeInspector.inspectText(text));
+        return;
+      }
+      claudeLineBuffer += text;
+      const lines = claudeLineBuffer.split('\n');
+      claudeLineBuffer = lines.pop() || '';
+      if (final && claudeLineBuffer) {
+        lines.push(claudeLineBuffer);
+        claudeLineBuffer = '';
+      }
+      for (const line of lines) {
+        let event;
+        try { event = JSON.parse(line); } catch { continue; }
+        fail(claudeInspector.inspectEvent(event));
+        if (claudeOutputError) break;
+      }
+    };
     const timeout = setTimeout(() => {
       terminateProcessGroup(child, 'SIGTERM');
       setTimeout(() => terminateProcessGroup(child, 'SIGKILL'), 2_000).unref();
@@ -241,7 +287,10 @@ export function runCliOnce(normalized, modelEntry, config) {
       child.stdin.end(stdin);
     }
 
-    child.stdout.on('data', (chunk) => stdout.push(chunk));
+    child.stdout.on('data', (chunk) => {
+      stdout.push(chunk);
+      if (claudeInspector) inspectClaudeOutput(claudeDecoder.write(chunk));
+    });
     child.stderr.on('data', (chunk) => stderr.push(chunk));
     child.stdin?.on('error', (error) => {
       if (error.code !== 'EPIPE') {
@@ -260,6 +309,11 @@ export function runCliOnce(normalized, modelEntry, config) {
     });
     child.on('close', (code, signal) => {
       clearTimeout(timeout);
+      if (claudeInspector) inspectClaudeOutput(claudeDecoder.end(), true);
+      if (claudeOutputError) {
+        reject(claudeOutputError);
+        return;
+      }
       if (signal) {
         reject(new HttpError(504, 'DEADLINE_EXCEEDED', 'Provider CLI timed out', {
           reason: 'provider_timeout',
@@ -330,17 +384,26 @@ export function streamCli(normalized, modelEntry, config, onText, options = {}) 
 
     let claudeLineBuffer = '';
     let claudeStreamError = '';
+    let claudeOutputError = null;
+    const claudeInspector = createClaudeOutputInspector();
     const claudeDecoder = new StringDecoder('utf8');
     let codexLineBuffer = '';
     let codexStreamError = '';
     let codexSawAgentMessage = false;
     const codexDecoder = new StringDecoder('utf8');
     const handleClaudeLine = (line) => {
-      if (!line.trim()) return;
+      if (!line.trim() || claudeOutputError) return;
       let event;
       try {
         event = JSON.parse(line);
       } catch {
+        return;
+      }
+      if (!event || typeof event !== 'object' || Array.isArray(event)) return;
+      const violation = claudeInspector.inspectEvent(event);
+      if (violation && !terminationReason) {
+        claudeOutputError = claudeProtocolError(violation);
+        terminate('provider_protocol_error');
         return;
       }
       const delta = event.type === 'stream_event' ? event.event?.delta : null;
@@ -468,6 +531,10 @@ export function streamCli(normalized, modelEntry, config, onText, options = {}) 
       if (modelEntry.provider === 'codex') {
         codexLineBuffer += codexDecoder.end();
         if (codexLineBuffer) handleCodexLine(codexLineBuffer);
+      }
+      if (claudeOutputError) {
+        reject(claudeOutputError);
+        return;
       }
       if (terminationReason === 'timeout') {
         reject(new HttpError(504, 'DEADLINE_EXCEEDED', 'Provider CLI timed out', {
