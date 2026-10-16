@@ -83,6 +83,7 @@ const env = [
   'ENABLE_CLAUDE=true',
   'ENABLE_CODEX=true',
   'ENABLE_CODEX_LIVE_SEARCH=true',
+  'ENABLE_CLAUDE_LIVE_SEARCH=false',
   'CLAUDE_BIN=claude',
   'CODEX_BIN=codex',
   'MODEL_REGISTRY_PATH=./config/models.json',

@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { StringDecoder } from 'node:string_decoder';
 import { HttpError } from './errors.js';
 import { quotaErrorDetails } from './provider-health.js';
-import { CLAUDE_TEXT_ONLY_INSTRUCTION, createClaudeOutputInspector } from './claude-output.js';
+import { CLAUDE_TEXT_ONLY_INSTRUCTION, CLAUDE_SEARCH_INSTRUCTION, CLAUDE_MAX_SEARCH_CALLS, createClaudeOutputInspector } from './claude-output.js';
 
 function providerTokenCount(value) {
   const count = Number(value || 0);
@@ -70,12 +70,14 @@ function claudeJsonResult(output) {
 export function providerCommand(normalized, modelEntry, config, options = {}) {
   if (modelEntry.provider === 'claude') {
     const hasImages = Array.isArray(normalized.images) && normalized.images.length > 0;
-    const outputFormat = options.stream || hasImages ? 'stream-json' : 'text';
+    const claudeWebSearchEnabled = Boolean(config.claudeLiveSearch && normalized.webSearchEnabled !== false);
+    const jsonOutput = options.stream || hasImages || claudeWebSearchEnabled;
+    const outputFormat = jsonOutput ? 'stream-json' : 'text';
     const args = [
       '-p',
       '--output-format',
       outputFormat,
-      ...(options.stream || hasImages ? ['--include-partial-messages', '--verbose'] : []),
+      ...(jsonOutput ? ['--include-partial-messages', '--verbose'] : []),
       ...(hasImages ? ['--input-format', 'stream-json'] : []),
       '--safe-mode',
       '--no-session-persistence',
@@ -83,11 +85,14 @@ export function providerCommand(normalized, modelEntry, config, options = {}) {
       '--permission-mode',
       'dontAsk',
       '--tools',
-      '',
+      claudeWebSearchEnabled ? 'WebSearch' : '',
+      '--disallowedTools',
+      'mcp__*',
+      ...(claudeWebSearchEnabled ? ['--allowedTools', 'WebSearch'] : []),
       '--max-turns',
-      '1',
+      claudeWebSearchEnabled ? '4' : '1',
       normalized.systemInstruction ? '--append-system-prompt' : '--system-prompt',
-      CLAUDE_TEXT_ONLY_INSTRUCTION,
+      claudeWebSearchEnabled ? CLAUDE_SEARCH_INSTRUCTION : CLAUDE_TEXT_ONLY_INSTRUCTION,
       '--model',
       modelEntry.cliModel
     ];
@@ -104,7 +109,12 @@ export function providerCommand(normalized, modelEntry, config, options = {}) {
       command: config.providerBinaries.claude,
       args,
       stdin: hasImages ? claudeStreamInput(normalized) : normalized.prompt,
-      claudeJsonOutput: hasImages
+      claudeJsonOutput: jsonOutput,
+      claudeWebSearchEnabled,
+      envOverrides: {
+        CLAUDE_CODE_DISABLE_WEB_FETCH: '1',
+        CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION: String(CLAUDE_MAX_SEARCH_CALLS)
+      }
     };
   }
 
@@ -214,7 +224,9 @@ function emptyProviderError(provider, diagnostic = '', config = {}) {
 function claudeProtocolError(reason) {
   return new HttpError(502, 'UNAVAILABLE', reason === 'provider_tool_call_loop'
     ? 'Provider repeatedly emitted unavailable tool calls'
-    : 'Provider attempted a tool call in text-only mode', {
+    : reason === 'provider_search_limit'
+      ? 'Provider exceeded the permitted search calls'
+      : 'Provider attempted a tool call outside the permitted tools', {
     reason,
     provider: 'claude'
   });
@@ -231,7 +243,7 @@ function terminateProcessGroup(child, signal) {
 }
 
 export function runCliOnce(normalized, modelEntry, config) {
-  const { command, args, stdin, claudeJsonOutput } = providerCommand(normalized, modelEntry, config);
+  const { command, args, stdin, claudeJsonOutput, claudeWebSearchEnabled, envOverrides } = providerCommand(normalized, modelEntry, config);
   const hasStdin = stdin !== undefined;
 
   return new Promise((resolve, reject) => {
@@ -240,6 +252,7 @@ export function runCliOnce(normalized, modelEntry, config) {
       stdio: [hasStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
+        ...envOverrides,
         NO_COLOR: '1'
       },
       detached: process.platform !== 'win32'
@@ -247,7 +260,7 @@ export function runCliOnce(normalized, modelEntry, config) {
 
     const stdout = [];
     const stderr = [];
-    const claudeInspector = modelEntry.provider === 'claude' ? createClaudeOutputInspector() : null;
+    const claudeInspector = modelEntry.provider === 'claude' ? createClaudeOutputInspector({ webSearchEnabled: claudeWebSearchEnabled }) : null;
     const claudeDecoder = new StringDecoder('utf8');
     let claudeLineBuffer = '';
     let claudeOutputError = null;
@@ -350,7 +363,7 @@ export function runCliOnce(normalized, modelEntry, config) {
 }
 
 export function streamCli(normalized, modelEntry, config, onText, options = {}) {
-  const { command, args, stdin } = providerCommand(normalized, modelEntry, config, { stream: true });
+  const { command, args, stdin, claudeWebSearchEnabled, envOverrides } = providerCommand(normalized, modelEntry, config, { stream: true });
   const hasStdin = stdin !== undefined;
 
   return new Promise((resolve, reject) => {
@@ -359,6 +372,7 @@ export function streamCli(normalized, modelEntry, config, onText, options = {}) 
       stdio: [hasStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       env: {
         ...process.env,
+        ...envOverrides,
         NO_COLOR: '1'
       },
       detached: process.platform !== 'win32'
@@ -385,7 +399,7 @@ export function streamCli(normalized, modelEntry, config, onText, options = {}) 
     let claudeLineBuffer = '';
     let claudeStreamError = '';
     let claudeOutputError = null;
-    const claudeInspector = createClaudeOutputInspector();
+    const claudeInspector = createClaudeOutputInspector({ webSearchEnabled: claudeWebSearchEnabled });
     const claudeDecoder = new StringDecoder('utf8');
     let codexLineBuffer = '';
     let codexStreamError = '';

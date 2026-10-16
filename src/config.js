@@ -238,6 +238,7 @@ export function loadConfig() {
       minIntervalMs: positiveIntEnv('ROUTER_ALERT_MIN_INTERVAL_MS', 60_000)
     },
     codexLiveSearch: boolEnv('ENABLE_CODEX_LIVE_SEARCH', false),
+    claudeLiveSearch: boolEnv('ENABLE_CLAUDE_LIVE_SEARCH', false),
     providerBinaries: {
       claude: process.env.CLAUDE_BIN || 'claude',
       codex: process.env.CODEX_BIN || 'codex'

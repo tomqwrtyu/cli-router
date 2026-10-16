@@ -145,7 +145,7 @@ The local listener:
 - rejects requests carrying a browser `Origin` header;
 - exposes `/health`, `/v1beta/models`, and direct generate/stream-generate;
 - does not expose `/v1/jobs` or use Mirastral callbacks and billing claims;
-- disables Codex live search by default; local requests may opt in with
+- disables live search by default; local requests may opt in with
   `routerConfig.webSearchEnabled=true` when the server-wide switch is enabled;
 - is independent of Mirastral's data-plane maintenance gate;
 - shares the public process's provider health and global CLI concurrency limit.
@@ -219,7 +219,7 @@ Supported request subset:
 - `contents[].parts[].file_data` / `fileData`
 - `systemInstruction.parts[].text`
 - `generationConfig` is accepted but only partially used by providers today
-- `routerConfig.webSearchEnabled` controls Codex live search when the server allows it
+- `routerConfig.webSearchEnabled` controls Codex/Claude live search when the provider's server-wide switch allows it
 
 Unsupported in v1:
 
@@ -351,7 +351,7 @@ as a fallback when dimensions cannot be parsed. Clients should prefer router
 
 Provider CLIs are run as one-shot chat backends, not coding agents:
 
-- Claude uses `--safe-mode`, `--no-session-persistence`, disabled slash commands, no tools, and a temporary `--system-prompt-file`. The conversation is passed through stdin. `--safe-mode` disables CLAUDE.md, hooks, skills, plugins, MCP, custom commands, agents, output styles, workflows, and other local customizations while preserving normal Claude Code auth.
+- Claude uses `--safe-mode`, `--no-session-persistence`, disabled slash commands, and a temporary `--system-prompt-file`. Tools are disabled unless `ENABLE_CLAUDE_LIVE_SEARCH=true` allows bounded WebSearch-only calls (3 searches, 4 agent turns); Bash, files, MCP and WebFetch remain unavailable. See [Claude output guard](docs/CLAUDE_TEXT_ONLY_GUARD.md) for limits and search privacy implications. The conversation is passed through stdin. `--safe-mode` disables CLAUDE.md, hooks, skills, plugins, MCP, custom commands, agents, output styles, workflows, and other local customizations while preserving normal Claude Code auth.
 - Codex runs with `--ephemeral`, `--ignore-user-config`, `--ignore-rules`, `--sandbox read-only`, and a temporary `--cd` directory. Application instructions and conversation text are passed through stdin, and images are passed with `--image`.
 
 This keeps request-sized text out of process arguments and prevents global/project coding instructions such as `CLAUDE.md` and `AGENTS.md` from shaping chat responses.

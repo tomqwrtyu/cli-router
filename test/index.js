@@ -5,6 +5,7 @@ import './catalog.test.js';
 import './claim.test.js';
 import './cli.test.js';
 import './claude-output.test.js';
+import './claude-search.test.js';
 import './cors.test.js';
 import './config.test.js';
 import './gemini.test.js';

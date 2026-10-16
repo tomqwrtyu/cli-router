@@ -324,10 +324,13 @@ Router availability fails closed. If Router cannot provide live availability, th
 shows only Gemini models and Router prepare returns 503. There is no stale-model
 launch and no implicit Gemini fallback.
 
-Codex live web search is controlled by Router environment configuration. Mirastral
-requests search by default, but Router remains authoritative. The signed private
-request carries only an allowlisted boolean; it cannot inject CLI arguments. Claude
-continues with tools disabled.
+Codex and Claude live web search are controlled by separate Router environment
+switches. Mirastral chat follows the live catalog's `capabilities.liveWebSearch`,
+but Router remains authoritative. The signed private request carries only an
+allowlisted boolean; it cannot inject CLI arguments. Claude permits only bounded
+WebSearch when enabled; shell, files, MCP and WebFetch stay disabled. The summary
+lane always disables search. See `CLAUDE_TEXT_ONLY_GUARD.md` for the search policy,
+limits and privacy implications.
 
 ## 14. BYOK
 

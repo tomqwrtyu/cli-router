@@ -69,3 +69,48 @@ test('Claude inspector ignores non-event JSON values', () => {
     assert.equal(createClaudeOutputInspector().inspectEvent(value), null);
   }
 });
+
+const toolStart = (name, id, type = 'tool_use') => ({ type: 'stream_event', event: {
+  type: 'content_block_start', content_block: { type, name, id, input: {} }
+} });
+const messageStart = { type: 'stream_event', event: { type: 'message_start' } };
+const toolStop = { type: 'stream_event', event: { type: 'message_delta', delta: { stop_reason: 'tool_use' } } };
+
+test('search inspector permits native search and deduplicates partial/assistant tool IDs', () => {
+  const inspector = createClaudeOutputInspector({ webSearchEnabled: true });
+  for (let index = 0; index < 3; index++) {
+    assert.equal(inspector.inspectEvent(messageStart), null);
+    assert.equal(inspector.inspectEvent(toolStart('WebSearch', `search-${index}`)), null);
+    assert.equal(inspector.inspectEvent(toolStop), null);
+    assert.equal(inspector.inspectEvent({ type: 'assistant', message: {
+      stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'WebSearch', id: `search-${index}` }]
+    } }), null);
+  }
+  assert.equal(inspector.inspectEvent(messageStart), null);
+  assert.equal(inspector.inspectEvent(delta('Answer with source URLs')), null);
+  assert.equal(inspector.inspectEvent(toolStart('WebSearch', 'search-4')), 'provider_search_limit');
+});
+
+test('search inspector permits only exact tool names and rejects unlinked tool stops', () => {
+  for (const event of [
+    toolStart('Bash', 'a'), toolStart('Read', 'a'), toolStart('WebFetch', 'a'),
+    toolStart('mcp__web__search', 'a'), toolStart('WebSearchExtra', 'a'),
+    toolStart('WebSearch', undefined), toolStart('Bash', 'a', 'server_tool_use'), toolStop
+  ]) {
+    assert.equal(createClaudeOutputInspector({ webSearchEnabled: true }).inspectEvent(event),
+      'provider_unexpected_tool_use');
+  }
+  const inspector = createClaudeOutputInspector({ webSearchEnabled: true });
+  assert.equal(inspector.inspectEvent(toolStart('web_search', 'server-search', 'server_tool_use')), null);
+  assert.equal(inspector.inspectEvent(toolStop), null);
+  assert.equal(inspector.inspectEvent(messageStart), null);
+  assert.equal(inspector.inspectEvent(toolStop), 'provider_unexpected_tool_use');
+  assert.equal(inspector.inspectEvent(toolStart('Bash', 'server-search')), 'provider_unexpected_tool_use');
+  assert.equal(createClaudeOutputInspector().inspectEvent(toolStart('WebSearch', 'a')),
+    'provider_unexpected_tool_use');
+});
+
+test('search mode keeps the textual tool-loop guard', () => {
+  const inspector = createClaudeOutputInspector({ webSearchEnabled: true });
+  assert.equal(inspector.inspectEvent(delta(invoke.repeat(8))), 'provider_tool_call_loop');
+});

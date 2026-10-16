@@ -60,3 +60,13 @@ test('direct local catalog never advertises public background jobs', () => {
   const models = buildModelCatalog(config, registry, null, claims, true);
   assert.equal(models[0].capabilities.backgroundJobs, false);
 });
+
+test('Claude catalog advertises WebSearch only when the operator enables it', () => {
+  const config = { providers: { claude: true }, backgroundJobs: { enabled: true } };
+  const claudeRegistry = { 'claude-test': { provider: 'claude', enabled: true } };
+  assert.equal(buildModelCatalog(config, claudeRegistry)[0].capabilities.liveWebSearch, false);
+  config.claudeLiveSearch = true;
+  assert.equal(buildModelCatalog(config, claudeRegistry)[0].capabilities.liveWebSearch, true);
+  config.claudeLiveSearch = false;
+  assert.equal(buildModelCatalog(config, claudeRegistry)[0].capabilities.liveWebSearch, false);
+});

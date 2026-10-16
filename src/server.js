@@ -236,7 +236,7 @@ export function buildModelCatalog(config, registry, providerHealth = null, claim
       outputTokenLimit: entry.outputTokenLimit || null,
       capabilities: {
         backgroundJobs: direct ? false : config.backgroundJobs.enabled,
-        liveWebSearch: entry.provider === 'codex' && config.codexLiveSearch
+        liveWebSearch: Boolean(entry.provider === 'codex' ? config.codexLiveSearch : config.claudeLiveSearch)
       }
     }));
 }
