@@ -414,6 +414,59 @@ test('cancelling a job emits a terminal callback and enforces the three-second l
   }
 });
 
+for (const [action, claimedMax, expected] of [
+  ['increment_memory', 131_072, 'completed'],
+  ['condense_memory', 131_072, 'completed'],
+  ['chat', 131_072, 'max_tokens'],
+  ['increment_memory', 100, 'max_tokens']
+]) {
+test(`output budgets isolate ${action} claimed=${claimedMax}`, async () => {
+  const runRoot = await mkdtemp(path.join(os.tmpdir(), 'cli-router-memory-budget-'));
+  const fakeCodex = path.join(runRoot, 'fake-codex');
+  const output = 'memory-data '.repeat(6_000);
+  await writeFile(fakeCodex, '#!/usr/bin/env node\nprocess.stdin.resume();process.stdin.on("end",()=>process.stdout.write(' +
+    JSON.stringify(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: output } }) + '\n') + '));\n');
+  await chmod(fakeCodex, 0o700);
+  let finish;
+  const terminal = new Promise(resolve => { finish = resolve; });
+  const manager = new JobManager({
+    config: {
+      providers: { codex: true }, providerBinaries: { codex: fakeCodex },
+      runTimeoutMs: 5_000, tmpDir: runRoot,
+      backgroundJobs: {
+        projectId: 'project-one', maxOutputTokens: 16_384, maxMemoryOutputTokens: 131_072,
+        maxActivePerUser: 1, launchesPerMinute: 6, cancelCooldownMs: 3_000,
+        heartbeatMs: 60_000, terminalRetentionMs: 60_000, outbox: { retryIntervalMs: 60_000 }
+      }
+    },
+    registry: { 'gpt-test': { provider: 'codex', cliModel: 'gpt-test', enabled: true,
+      reasoningEffort: 'medium', contextWindow: 100_000, inputCharLimit: 10_000,
+      inputTokenLimit: 10_000, autoCompactTokenLimit: 80_000 } },
+    streamTokens: { issue: async () => 'token' },
+    claimClient: { claim: async () => ({ requestId, userId, action, model: 'gpt-test',
+      bodyJson, maxOutputTokens: claimedMax, webSearchEnabled: false }) },
+    callbackClient: { deliver: async event => {
+      if (event.event === 'router.generation.terminal') finish(event);
+      return { delivered: true };
+    } },
+    outbox: { enqueue: () => assert.fail('unexpected outbox'), purgeExpired: () => 0, due: () => [], close() {} }
+  });
+  try {
+    await manager.launch({ projectId: 'project-one', requestId, userId, action, model: 'gpt-test', payloadHash }, {
+      project_id: 'project-one', request_id: requestId, user_id: userId,
+      action, model: 'gpt-test', payload_hash: payloadHash
+    });
+    const event = await terminal;
+    assert.equal(event.status, expected);
+    if (expected === 'completed') assert.equal(event.output, output);
+    else assert.ok(Buffer.byteLength(event.output) <= 2 * Math.min(claimedMax, action === 'chat' ? 16_384 : 131_072));
+  } finally {
+    manager.close();
+    await rm(runRoot, { recursive: true, force: true });
+  }
+});
+}
+
 for (const order of ['summary-first', 'chat-first']) {
 test(`summary lane permits both launch orders and reserves foreground capacity: ${order}`, async () => {
   const runRoot = await mkdtemp(path.join(os.tmpdir(), 'cli-router-summary-lane-'));

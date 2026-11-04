@@ -285,6 +285,7 @@ export function loadConfig() {
       launchesPerMinute: positiveIntEnv('ROUTER_LAUNCHES_PER_MINUTE', 6),
       cancelCooldownMs: intEnv('ROUTER_CANCEL_COOLDOWN_MS', 3_000),
       maxOutputTokens: positiveIntEnv('ROUTER_MAX_OUTPUT_TOKENS', 16_384),
+      maxMemoryOutputTokens: positiveIntEnv('ROUTER_MAX_MEMORY_OUTPUT_TOKENS', 131_072),
       heartbeatMs: positiveIntEnv('ROUTER_HEARTBEAT_MS', 30_000),
       terminalRetentionMs: positiveIntEnv('ROUTER_TERMINAL_RETENTION_MS', 15 * 60_000),
       outbox: {

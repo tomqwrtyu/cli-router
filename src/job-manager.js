@@ -404,10 +404,13 @@ export class JobManager {
       }, this.config.backgroundJobs.heartbeatMs);
       heartbeatTimer.unref();
 
+      const outputCap = ['condense_memory', 'increment_memory'].includes(job.action)
+        ? (this.config.backgroundJobs.maxMemoryOutputTokens || 131_072)
+        : this.config.backgroundJobs.maxOutputTokens;
       const claimedMax = Number.isInteger(claimed.maxOutputTokens) && claimed.maxOutputTokens > 0
         ? claimed.maxOutputTokens
-        : this.config.backgroundJobs.maxOutputTokens;
-      const maxOutputTokens = Math.min(this.config.backgroundJobs.maxOutputTokens, claimedMax);
+        : outputCap;
+      const maxOutputTokens = Math.min(outputCap, claimedMax);
       const result = await streamCli(normalized, modelEntry, this.config, (text) => {
         if (!text || job.controller.signal.aborted) return;
         const fitted = fitWithinTokenLimit(job.output, text, maxOutputTokens);
