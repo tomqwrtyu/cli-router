@@ -4,6 +4,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { HttpError } from './errors.js';
 import { quotaErrorDetails } from './provider-health.js';
 import { CLAUDE_TEXT_ONLY_INSTRUCTION, CLAUDE_SEARCH_INSTRUCTION, CLAUDE_MAX_SEARCH_CALLS, createClaudeOutputInspector } from './claude-output.js';
+import { createClaudeTextStream } from './claude-text-stream.js';
 
 function providerTokenCount(value) {
   const count = Number(value || 0);
@@ -400,6 +401,7 @@ export function streamCli(normalized, modelEntry, config, onText, options = {}) 
     let claudeStreamError = '';
     let claudeOutputError = null;
     const claudeInspector = createClaudeOutputInspector({ webSearchEnabled: claudeWebSearchEnabled });
+    const claudeTextStream = createClaudeTextStream();
     const claudeDecoder = new StringDecoder('utf8');
     let codexLineBuffer = '';
     let codexStreamError = '';
@@ -420,10 +422,8 @@ export function streamCli(normalized, modelEntry, config, onText, options = {}) 
         terminate('provider_protocol_error');
         return;
       }
-      const delta = event.type === 'stream_event' ? event.event?.delta : null;
-      if (event.event?.type === 'content_block_delta' && delta?.type === 'text_delta' && delta.text) {
-        onText(delta.text);
-      }
+      const text = claudeTextStream.consume(event);
+      if (text) onText(text);
       if (event.type === 'error' || (event.type === 'result' && event.is_error)) {
         claudeStreamError = event.error?.message || event.result || JSON.stringify(event);
       }
@@ -541,6 +541,8 @@ export function streamCli(normalized, modelEntry, config, onText, options = {}) 
       if (modelEntry.provider === 'claude') {
         claudeLineBuffer += claudeDecoder.end();
         if (claudeLineBuffer) handleClaudeLine(claudeLineBuffer);
+        const requestId = /^[a-f0-9-]{36}$/i.test(options.requestId || '') ? options.requestId : 'untracked';
+        console.info(`Claude stream protocol request_id=${requestId} ${JSON.stringify(claudeTextStream.diagnostic())}`);
       }
       if (modelEntry.provider === 'codex') {
         codexLineBuffer += codexDecoder.end();

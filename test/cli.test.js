@@ -205,9 +205,10 @@ test('Claude streaming uses stream-json and forwards only text deltas', async ()
       [
         '#!/bin/sh',
         'cat >/dev/null',
-        `printf '%s\\n' '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"first "}}}'`,
+        `printf '%s\\n' '{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}}'`,
+        `printf '%s\\n' '{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"first "}}}'`,
         `printf '%s\\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"duplicate"}]}}'`,
-        `printf '%s\\n' '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"second"}}}'`,
+        `printf '%s\\n' '{"type":"stream_event","event":{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"second"}}}'`,
         `printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"result":"duplicate","usage":{"input_tokens":2,"output_tokens":100,"cache_read_input_tokens":300,"cache_creation_input_tokens":700,"cache_creation":{"ephemeral_5m_input_tokens":600,"ephemeral_1h_input_tokens":100}}}'`
       ].join('\n')
     );
@@ -254,6 +255,48 @@ test('Claude streaming uses stream-json and forwards only text deltas', async ()
     await rm(runDir, { recursive: true, force: true });
   }
 });
+
+for (const mode of ['stream', 'nonstream']) {
+  test(`Claude keeps thinking out of replies across split UTF-8 events: ${mode}`, async () => {
+    const runDir = await mkdtemp(path.join(os.tmpdir(), 'cli-router-thinking-'));
+    const fakeClaude = path.join(runDir, 'fake-claude.mjs');
+    const answer = 'Answer in English or 中文.\n[MIRASTRAL_METADATA]{"suggestions":[]}';
+    const wrap = event => ({ type: 'stream_event', event });
+    const events = [
+      wrap({ type: 'message_start', message: { role: 'assistant' } }),
+      wrap({ type: 'content_block_start', index: 0, content_block: { type: 'thinking' } }),
+      wrap({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'PRIVATE_THINKING' } }),
+      wrap({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'PRIVATE_MISLABELED' } }),
+      wrap({ type: 'content_block_stop', index: 0 }),
+      wrap({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } }),
+      wrap({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: answer } }),
+      { type: 'assistant', message: { content: [
+        { type: 'thinking', thinking: 'PRIVATE_SNAPSHOT' }, { type: 'text', text: answer }
+      ] } },
+      wrap({ type: 'message_stop' }),
+      { type: 'result', is_error: false, result: answer }
+    ];
+    try {
+      await writeFile(fakeClaude, [
+        '#!/usr/bin/env node',
+        'process.stdin.resume();',
+        `process.stdin.on('end', () => { const bytes=Buffer.from(${JSON.stringify(events.map(event => JSON.stringify(event)).join('\n') + '\n')}); for (const byte of bytes) process.stdout.write(Buffer.from([byte])); });`
+      ].join('\n'));
+      await chmod(fakeClaude, 0o700);
+      const normalized = { prompt: 'Synthetic question', runDir };
+      const config = { providerBinaries: { claude: fakeClaude }, claudeLiveSearch: true, runTimeoutMs: 5_000 };
+      const chunks = [];
+      if (mode === 'stream') {
+        await streamCli(normalized, claudeEntry, config, text => chunks.push(text));
+        assert.equal(chunks.join(''), answer);
+      } else {
+        assert.equal(await runCliOnce(normalized, claudeEntry, config), answer);
+      }
+    } finally {
+      await rm(runDir, { recursive: true, force: true });
+    }
+  });
+}
 
 test('Claude runner can spawn with a 200 KiB prompt', async () => {
   const runDir = await mkdtemp(path.join(os.tmpdir(), 'cli-router-test-'));

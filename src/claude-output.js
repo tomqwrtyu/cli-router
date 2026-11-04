@@ -1,10 +1,12 @@
 const WINDOW_CHARS = 8_192;
 const REPEATED_INVOCATIONS = 8;
 export const CLAUDE_MAX_SEARCH_CALLS = 3;
+const VISIBLE_OUTPUT_INSTRUCTION = 'Visible text must contain only the user-facing answer and the application-requested output metadata. Do not include private thinking, planning notes, or self-instructions in visible text.';
 
 export const CLAUDE_TEXT_ONLY_INSTRUCTION = [
   'You are responding through a text-only API, not an interactive coding session.',
   'Follow the application instructions and requested output format.',
+  VISIBLE_OUTPUT_INSTRUCTION,
   'No tools, shell, Python execution, or tool-result channel are available.',
   'Never attempt tool calls or wait for tool results. Do not simulate tool execution.',
   'Answer from the supplied conversation and attachments. For a simulated draw or arbitrary choice, choose directly in your reply without claiming an external random generator.',
@@ -14,6 +16,7 @@ export const CLAUDE_TEXT_ONLY_INSTRUCTION = [
 export const CLAUDE_SEARCH_INSTRUCTION = [
   'You are responding through a conversational API, not an interactive coding session.',
   'Follow the application instructions and requested output format.',
+  VISIBLE_OUTPUT_INSTRUCTION,
   'The only available tool is WebSearch. Use its actual tool channel when current external information is needed.',
   `Use at most ${CLAUDE_MAX_SEARCH_CALLS} WebSearch calls, then answer using the available evidence and cite source URLs.`,
   'WebFetch, shell, Python execution, local files, and MCP are unavailable. Never simulate tool calls or tool results.',

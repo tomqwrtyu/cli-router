@@ -418,6 +418,7 @@ export class JobManager {
         if (fitted.limited) job.controller.abort('max_tokens');
       }, {
         signal: job.controller.signal,
+        requestId: job.id,
         onEvent: (event) => this.publish(job, { ...event, requestId: job.id })
       });
       if (!job.output.trim()) {
