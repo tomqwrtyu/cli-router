@@ -200,6 +200,14 @@ export async function normalizeGeminiRequest(body, config, modelEntry) {
 
   const routerConfig = body.routerConfig || body.router_config;
   const requestedWebSearch = routerConfig?.webSearchEnabled ?? routerConfig?.web_search_enabled;
+  const attachmentByteLimit = routerConfig?.maxAttachmentBytes;
+  if (attachmentByteLimit !== undefined && (!Number.isSafeInteger(attachmentByteLimit) ||
+      attachmentByteLimit < 1 || attachmentByteLimit > 30 * 1024 * 1024)) {
+    throw new HttpError(400, 'INVALID_ARGUMENT', 'routerConfig.maxAttachmentBytes must be an integer from 1 to 31457280', {
+      reason: 'invalid_router_config'
+    });
+  }
+  const attachmentBudget = attachmentByteLimit === undefined ? null : { remaining: attachmentByteLimit };
   if (requestedWebSearch !== undefined && typeof requestedWebSearch !== 'boolean') {
     throw new HttpError(400, 'INVALID_ARGUMENT', 'routerConfig.webSearchEnabled must be a boolean', {
       reason: 'invalid_router_config'
@@ -234,7 +242,8 @@ export async function normalizeGeminiRequest(body, config, modelEntry) {
           const materialized = await materializePart(normalized, {
             config,
             runDir,
-            modelEntry
+            modelEntry,
+            attachmentBudget
           });
           if (materialized.kind === 'image') {
             imagePaths.push(materialized.path);

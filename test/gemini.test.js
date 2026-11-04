@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -136,5 +136,45 @@ test('Gemini normalization rejects a non-boolean router web-search preference', 
     );
   } finally {
     await rm(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('aggregate attachment budget counts inline documents across all messages', async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'router-batch-budget-'));
+  const part = { inlineData: { mimeType: 'text/plain', data: Buffer.from('12345').toString('base64') } };
+  try {
+    await assert.rejects(normalizeGeminiRequest({ routerConfig: { maxAttachmentBytes: 9 },
+      contents: [{ role: 'user', parts: [part] }, { role: 'user', parts: [part] }]
+    }, attachmentConfig(tmpDir), {}), error => error.statusCode === 413);
+    assert.deepEqual(await readdir(tmpDir), []);
+    const normalized = await normalizeGeminiRequest({ routerConfig: { maxAttachmentBytes: 10 },
+      contents: [{ role: 'user', parts: [part, part] }]
+    }, attachmentConfig(tmpDir), {});
+    assert.match(normalized.prompt, /12345/);
+  } finally { await rm(tmpDir, { recursive: true, force: true }); }
+});
+
+test('download budget checks actual bytes even when Content-Length lies', async () => {
+  const originalFetch = globalThis.fetch;
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), 'router-fetch-budget-'));
+  const config = attachmentConfig(tmpDir);
+  config.attachments.allowedFileUriHosts = ['storage.invalid'];
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; return new Response('12345', { headers: { 'content-length': '1' } }); };
+  const part = { fileData: { mimeType: 'text/plain', fileUri: 'https://storage.invalid/test.txt' } };
+  try {
+    await assert.rejects(normalizeGeminiRequest({ routerConfig: { maxAttachmentBytes: 9 },
+      contents: [{ role: 'user', parts: [part, part] }]
+    }, config, {}), error => error.statusCode === 413);
+    assert.equal(calls, 2);
+    assert.deepEqual(await readdir(tmpDir), []);
+  } finally { globalThis.fetch = originalFetch; await rm(tmpDir, { recursive: true, force: true }); }
+});
+
+test('invalid aggregate attachment budgets are rejected before materialization', async () => {
+  for (const maxAttachmentBytes of [0, -1, 1.5, '30', 30 * 1024 * 1024 + 1]) {
+    await assert.rejects(normalizeGeminiRequest({ routerConfig: { maxAttachmentBytes },
+      contents: [{ role: 'user', parts: [{ text: 'test' }] }]
+    }, {}, {}), error => error.statusCode === 400 && error.details.reason === 'invalid_router_config');
   }
 });

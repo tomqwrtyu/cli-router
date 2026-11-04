@@ -98,9 +98,9 @@ function throwTooLarge(maxBytes) {
   });
 }
 
-async function downloadFile(uri, mimeType, config) {
+async function downloadFile(uri, mimeType, config, budget) {
   assertAllowedUri(uri, config);
-  const maxBytes = maxBytesForMime(mimeType, config);
+  const maxBytes = Math.min(maxBytesForMime(mimeType, config), budget?.remaining ?? Infinity);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.attachments.downloadTimeoutMs);
   try {
@@ -124,15 +124,17 @@ async function downloadFile(uri, mimeType, config) {
     }
     throw error;
   } finally {
+    controller.abort();
     clearTimeout(timeout);
   }
 }
 
-function decodeInlineData(inlineData, mimeType, config) {
+function decodeInlineData(inlineData, mimeType, config, budget) {
   if (typeof inlineData.data !== 'string') {
     throw new HttpError(400, 'INVALID_ARGUMENT', 'inline_data.data must be base64');
   }
-  const maxBytes = maxBytesForMime(mimeType, config);
+  const maxBytes = Math.min(maxBytesForMime(mimeType, config), budget?.remaining ?? Infinity);
+  if (Buffer.byteLength(inlineData.data, 'base64') > maxBytes) throwTooLarge(maxBytes);
   const buffer = Buffer.from(inlineData.data, 'base64');
   if (buffer.length > maxBytes) throwTooLarge(maxBytes);
   return buffer;
@@ -279,7 +281,7 @@ async function textFromBuffer(mimeType, buffer, config) {
   return truncateText(decoded, config.attachments.maxDocTextChars);
 }
 
-export async function materializePart(part, { config, runDir, modelEntry }) {
+export async function materializePart(part, { config, runDir, modelEntry, attachmentBudget }) {
   const data = part.inlineData || part.fileData;
   const mimeType = mimeFromData(data);
   if (!mimeType) {
@@ -305,9 +307,10 @@ export async function materializePart(part, { config, runDir, modelEntry }) {
     : `inline-${mimeType.replace('/', '-')}`;
 
   const buffer = part.fileData
-    ? await downloadFile(fileUri, mimeType, config)
-    : decodeInlineData(part.inlineData, mimeType, config);
+    ? await downloadFile(fileUri, mimeType, config, attachmentBudget)
+    : decodeInlineData(part.inlineData, mimeType, config, attachmentBudget);
   assertMagicBytes(mimeType, buffer);
+  if (attachmentBudget) attachmentBudget.remaining -= buffer.length;
 
   if (isImage) {
     if (!modelEntry.supportsImages) {
