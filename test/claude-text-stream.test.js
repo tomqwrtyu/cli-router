@@ -33,9 +33,24 @@ test('Claude emits only indexed text blocks, not thinking, signatures, snapshots
     blocks: { text: 1, thinking: 1, redactedThinking: 1, other: 0 },
     textBytes: 13, thinkingDeltas: 1,
     suppressedTextBytes: Buffer.byteLength('MISLABELED_THINKINGPRIVATE_REDACTED_DELTA'),
-    finalResultMatchesStream: true
+    finalResultMatchesStream: true,
+    stopReasons: {},
+    result: { subtype: 'unknown', isError: false, errorCount: 0 }
   });
   assert.doesNotMatch(JSON.stringify(reader.diagnostic()), /PRIVATE|Public|answer/);
+});
+
+test('Claude failure diagnostics preserve only allowlisted protocol classifications', () => {
+  const reader = createClaudeTextStream();
+  reader.consume(stream({ type: 'message_delta', delta: { stop_reason: 'refusal' } }));
+  reader.consume(stream({ type: 'message_delta', delta: { stop_reason: 'PRIVATE_REASON' } }));
+  reader.consume({ type: 'result', subtype: 'error_max_turns', is_error: true,
+    errors: ['PRIVATE_ERROR'], result: 'PRIVATE_RESULT' });
+  assert.deepEqual(reader.diagnostic().stopReasons, { refusal: 1, unknown: 1 });
+  assert.deepEqual(reader.diagnostic().result, { subtype: 'error_max_turns', isError: true, errorCount: 1 });
+  reader.consume({ type: 'result', subtype: 'PRIVATE_SUBTYPE', is_error: true });
+  assert.equal(reader.diagnostic().result.subtype, 'unknown');
+  assert.doesNotMatch(JSON.stringify(reader.diagnostic()), /PRIVATE/);
 });
 
 test('Claude drops unknown, closed, reused and cross-message text block indices', () => {
